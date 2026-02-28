@@ -125,7 +125,7 @@ async def make_call(to_number):
         return False
 
 # ======================
-# IVR Answer
+# IVR - Main Menu
 # ======================
 @app.get("/answer")
 async def answer():
@@ -137,14 +137,13 @@ async def answer():
         {
             "action": "input",
             "maxDigits": 1,
-            "timeOut": 10,
             "eventUrl": [f"{RENDER_URL}/event"]
         }
     ]
     return JSONResponse(ncco)
 
 # ======================
-# IVR Event
+# IVR - Event
 # ======================
 @app.post("/event")
 async def event(req: Request):
@@ -154,19 +153,19 @@ async def event(req: Request):
 
     if dtmf == "1":
         ncco = [
-            {"action": "talk", "text": "You selected Service A. Please say your details after the beep."},
+            {"action": "talk", "text": "You selected Service A. You have 30 seconds to provide your details after the beep."},
             {"action": "input",
              "type": ["speech"],
-             "speech": {"language": "en-US", "endOnSilence": 2, "maxDuration": 60},
-             "eventUrl": [f"{RENDER_URL}/service_a"]}
+             "speech": {"language": "en-US", "endOnSilence": 2, "maxDuration": 30},
+             "eventUrl": [f"{RENDER_URL}/service_a_confirm"]}
         ]
     elif dtmf == "2":
         ncco = [
-            {"action": "talk", "text": "You selected Service B. Please say your details after the beep."},
+            {"action": "talk", "text": "You selected Service B. You have 30 seconds to provide your details after the beep."},
             {"action": "input",
              "type": ["speech"],
-             "speech": {"language": "en-US", "endOnSilence": 2, "maxDuration": 60},
-             "eventUrl": [f"{RENDER_URL}/service_b"]}
+             "speech": {"language": "en-US", "endOnSilence": 2, "maxDuration": 30},
+             "eventUrl": [f"{RENDER_URL}/service_b_confirm"]}
         ]
     elif dtmf == "3":
         ncco = [{"action": "talk", "text": "Report will be sent to your WhatsApp. Thank you!"}]
@@ -175,25 +174,80 @@ async def event(req: Request):
     return JSONResponse(ncco)
 
 # ======================
-# Example Service Endpoints
+# Service A Confirm
 # ======================
-@app.post("/service_a")
-async def service_a(req: Request):
+@app.post("/service_a_confirm")
+async def service_a_confirm(req: Request):
     data = await req.json()
-    speech = ""
+    speech_text = ""
     if "speech" in data:
-        speech = data["speech"][0]["results"][0]["text"]
-    send_whatsapp("+967774440982", f"Service A request: {speech}")
-    return JSONResponse([{"action": "talk", "text": "Thank you, your Service A request has been received."}])
+        speech_text = data["speech"][0]["results"][0]["text"]
 
-@app.post("/service_b")
-async def service_b(req: Request):
+    ncco = [
+        {"action": "talk",
+         "text": f"You said: '{speech_text}'. Press 1 to confirm, 2 to return to main menu, 3 to exit."},
+        {"action": "input",
+         "maxDigits": 1,
+         "timeOut": 30,
+         "eventUrl": [f"{RENDER_URL}/service_a_finalize?details={speech_text}"]}
+    ]
+    return JSONResponse(ncco)
+
+@app.post("/service_a_finalize")
+async def service_a_finalize(req: Request):
     data = await req.json()
-    speech = ""
+    dtmf = data.get("dtmf")
+    details = req.query_params.get("details", "")
+
+    if dtmf == "1":
+        send_whatsapp("+967774440982", f"Service A confirmed request: {details}")
+        ncco = [{"action": "talk", "text": "Thank you! Your request has been recorded."}]
+    elif dtmf == "2":
+        ncco = [{"action": "talk", "text": "Returning to main menu."},
+                {"action": "input", "maxDigits": 1, "eventUrl": [f"{RENDER_URL}/event"]}]
+    elif dtmf == "3":
+        ncco = [{"action": "talk", "text": "Exiting. Goodbye!"}]
+    else:
+        ncco = [{"action": "talk", "text": "Invalid choice. Goodbye!"}]
+    return JSONResponse(ncco)
+
+# ======================
+# Service B Confirm (نفس المنطق)
+# ======================
+@app.post("/service_b_confirm")
+async def service_b_confirm(req: Request):
+    data = await req.json()
+    speech_text = ""
     if "speech" in data:
-        speech = data["speech"][0]["results"][0]["text"]
-    send_whatsapp("+967774440982", f"Service B request: {speech}")
-    return JSONResponse([{"action": "talk", "text": "Thank you, your Service B request has been received."}])
+        speech_text = data["speech"][0]["results"][0]["text"]
+
+    ncco = [
+        {"action": "talk",
+         "text": f"You said: '{speech_text}'. Press 1 to confirm, 2 to return to main menu, 3 to exit."},
+        {"action": "input",
+         "maxDigits": 1,
+         "timeOut": 30,
+         "eventUrl": [f"{RENDER_URL}/service_b_finalize?details={speech_text}"]}
+    ]
+    return JSONResponse(ncco)
+
+@app.post("/service_b_finalize")
+async def service_b_finalize(req: Request):
+    data = await req.json()
+    dtmf = data.get("dtmf")
+    details = req.query_params.get("details", "")
+
+    if dtmf == "1":
+        send_whatsapp("+967774440982", f"Service B confirmed request: {details}")
+        ncco = [{"action": "talk", "text": "Thank you! Your request has been recorded."}]
+    elif dtmf == "2":
+        ncco = [{"action": "talk", "text": "Returning to main menu."},
+                {"action": "input", "maxDigits": 1, "eventUrl": [f"{RENDER_URL}/event"]}]
+    elif dtmf == "3":
+        ncco = [{"action": "talk", "text": "Exiting. Goodbye!"}]
+    else:
+        ncco = [{"action": "talk", "text": "Invalid choice. Goodbye!"}]
+    return JSONResponse(ncco)
 
 # ======================
 # Inbound WhatsApp
