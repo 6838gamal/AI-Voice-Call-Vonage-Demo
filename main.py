@@ -25,8 +25,6 @@ load_dotenv()
 
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
 PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
-VONAGE_API_KEY = os.getenv("VONAGE_API_KEY")
-VONAGE_API_SECRET = os.getenv("VONAGE_API_SECRET")
 WHATSAPP_SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
 PORT = int(os.getenv("PORT", 3000))
@@ -44,10 +42,10 @@ templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ======================
-# Vonage clients
+# Vonage client
 # ======================
 vonage_client = VonageClient(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
-messages_client = Messages(key=VONAGE_API_KEY, secret=VONAGE_API_SECRET)
+messages_client = Messages(client=vonage_client)
 
 # ======================
 # Gemini AI client
@@ -82,8 +80,8 @@ def send_whatsapp(to: str, text: str):
     """Send WhatsApp message via Vonage"""
     try:
         messages_client.send_message({
-            "from": WHATSAPP_SANDBOX_NUMBER,
-            "to": to,
+            "from": {"type": "whatsapp", "number": WHATSAPP_SANDBOX_NUMBER},
+            "to": {"type": "whatsapp", "number": to},
             "message_type": "text",
             "text": text
         })
