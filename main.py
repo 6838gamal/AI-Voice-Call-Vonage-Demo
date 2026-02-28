@@ -1,18 +1,15 @@
 import os
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-
 from dotenv import load_dotenv
 
-# Vonage الجديد: استخدم Client بدلاً من Vonage
-from vonage import Client as VonageClient, Auth, HttpClientOptions
+# Vonage الجديد بدون Auth أو HttpClientOptions
+from vonage import Client as VonageClient
 from vonage_messages import WhatsappText
 from vonage_voice import CreateCallRequest, Talk
 
 # Gemini
 from google.ai import gemini
-
-# uvicorn لتشغيل FastAPI
 import uvicorn
 
 # ======================
@@ -22,13 +19,10 @@ load_dotenv()
 
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
 PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
-
 WHATSAPP_SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
-
 BASE_URL = os.getenv("BASE_URL")
 PORT = int(os.getenv("PORT", 3000))
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # ======================
@@ -36,10 +30,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # ======================
 app = FastAPI()
 
-# Vonage client
-auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
-options = HttpClientOptions(api_host="messages-sandbox.nexmo.com")
-vonage_client = VonageClient(auth, options)
+# Vonage Client جديد
+vonage_client = VonageClient(
+    application_id=APP_ID,
+    private_key=PRIVATE_KEY_PATH
+)
 
 # Gemini client
 gemini_client = gemini.Client(api_key=GEMINI_API_KEY)
@@ -51,7 +46,6 @@ last_whatsapp_user = None
 # AI RESPONSE
 # ======================
 def ai_response(prompt: str) -> str:
-    """يرسل نص إلى Gemini 3.5-Flash ويرجع الرد"""
     response = gemini_client.chat(
         model="gemini-3.5-flash",
         messages=[{"role": "user", "content": prompt}]
@@ -86,7 +80,6 @@ async def inbound(req: Request):
         send_whatsapp(sender, "Calling you now...")
         await make_call(sender)
     else:
-        # الرد الذكي باستخدام Gemini
         reply_text = ai_response(text)
         send_whatsapp(sender, reply_text)
 
@@ -96,7 +89,6 @@ async def inbound(req: Request):
 # MAKE VOICE CALL
 # ======================
 async def make_call(to_number: str):
-    # الرد الصوتي الذكي باستخدام Gemini
     ai_text = ai_response(
         "The user requested a call. Give a friendly greeting and short introduction."
     )
@@ -116,7 +108,7 @@ async def make_call(to_number: str):
         machine_detection="hangup"
     )
 
-    client_voice = VonageClient(auth)
+    client_voice = VonageClient(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
     client_voice.voice.create_call(call)
 
 # ======================
@@ -130,9 +122,7 @@ async def status():
 # MAIN FUNCTION
 # ======================
 def main():
-    """تشغيل FastAPI على البورت المحدد في .env"""
-    port = int(os.getenv("PORT", 3000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=False)
 
 # ======================
 # ENTRY POINT
