@@ -1,8 +1,9 @@
 import os
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-import asyncio
 
 # ======================
 # Vonage
@@ -33,6 +34,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Initialize App
 # ======================
 app = FastAPI()
+
+# Serve static files (HTML/JS)
+app.mount("/", StaticFiles(directory=".", html=True), name="static")
 
 # Vonage clients
 vonage_client = VonageClient(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
@@ -97,7 +101,7 @@ async def make_call(to_number: str):
         print(f"[Error] Voice call failed: {e}")
 
 # ======================
-# INBOUND WHATSAPP
+# INBOUND WHATSAPP / WEB
 # ======================
 @app.post("/inbound")
 async def inbound(req: Request):
@@ -110,11 +114,12 @@ async def inbound(req: Request):
     if text.lower() == "call":
         send_whatsapp(sender, "Calling you now...")
         await make_call(sender)
+        reply_text = "تم الاتصال، تحقق من مكالمتك."
     else:
         reply_text = ai_response(text)
         send_whatsapp(sender, reply_text)
 
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "reply": reply_text})
 
 # ======================
 # STATUS

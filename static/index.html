@@ -2,54 +2,61 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>WhatsApp AI Caller</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI WhatsApp & Voice</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; height: 100vh; }
-    .container { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 350px; }
-    input, button { width: 100%; padding: 10px; margin: 5px 0; border-radius: 5px; border: 1px solid #ccc; }
-    button { background: #4CAF50; color: white; border: none; cursor: pointer; }
-    button:hover { background: #45a049; }
-    #status { margin-top: 10px; color: #333; }
+    body { font-family: Arial; max-width: 600px; margin: 40px auto; }
+    input, button, textarea { width: 100%; margin: 5px 0; padding: 10px; font-size: 1rem; }
+    textarea { height: 100px; }
+    #response { background: #f0f0f0; padding: 10px; margin-top: 10px; white-space: pre-wrap; min-height: 50px; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h2>WhatsApp AI Chat</h2>
-    <input type="text" id="phone" placeholder="Enter WhatsApp number (+countrycode)">
-    <textarea id="message" placeholder="Your message..." rows="3"></textarea>
-    <button onclick="sendMessage()">Send via WhatsApp</button>
-    <div id="status"></div>
-  </div>
+  <h2>AI WhatsApp & Voice</h2>
+
+  <label>رقم واتساب (مثال: +96777xxxxxxx)</label>
+  <input type="text" id="phone" placeholder="Enter phone number">
+
+  <label>نص الرسالة أو اكتب 'call' لإجراء مكالمة</label>
+  <textarea id="message" placeholder="Enter your message"></textarea>
+
+  <button id="sendBtn">إرسال</button>
+
+  <div id="response"></div>
 
   <script>
-    async function sendMessage() {
-      const phone = document.getElementById('phone').value.trim();
-      const message = document.getElementById('message').value.trim();
-      const statusEl = document.getElementById('status');
+    const sendBtn = document.getElementById('sendBtn');
+    const phoneInput = document.getElementById('phone');
+    const messageInput = document.getElementById('message');
+    const responseDiv = document.getElementById('response');
 
-      if (!phone || !message) {
-        statusEl.textContent = "Please enter both phone number and message.";
+    sendBtn.addEventListener('click', async () => {
+      const phone = phoneInput.value.trim();
+      const text = messageInput.value.trim();
+      if (!phone || !text) {
+        alert("يرجى إدخال رقم واتساب والنص!");
         return;
       }
 
-      statusEl.textContent = "Sending...";
+      responseDiv.textContent = "جارٍ الإرسال...";
 
       try {
-        const res = await fetch('/send_whatsapp', {
+        const res = await fetch('/inbound', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: phone, text: message })
+          body: JSON.stringify({ from: phone, text })
         });
+
         const data = await res.json();
         if (data.ok) {
-          statusEl.textContent = "Message sent successfully!";
+          responseDiv.textContent = "تم الإرسال بنجاح!\nرد AI:\n" + (data.reply || "");
         } else {
-          statusEl.textContent = "Failed to send message.";
+          responseDiv.textContent = "حدث خطأ أثناء الإرسال.";
         }
       } catch (err) {
-        statusEl.textContent = "Error: " + err.message;
+        responseDiv.textContent = "خطأ: " + err.message;
       }
-    }
+    });
   </script>
 </body>
 </html>
