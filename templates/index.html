@@ -4,12 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI WhatsApp & Voice</title>
-  <style>
-    body { font-family: Arial; max-width: 600px; margin: 40px auto; }
-    input, button, textarea { width: 100%; margin: 5px 0; padding: 10px; font-size: 1rem; }
-    textarea { height: 100px; }
-    #response { background: #f0f0f0; padding: 10px; margin-top: 10px; white-space: pre-wrap; min-height: 50px; }
-  </style>
+  <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
   <h2>AI WhatsApp & Voice</h2>
@@ -24,39 +19,6 @@
 
   <div id="response"></div>
 
-  <script>
-    const sendBtn = document.getElementById('sendBtn');
-    const phoneInput = document.getElementById('phone');
-    const messageInput = document.getElementById('message');
-    const responseDiv = document.getElementById('response');
-
-    sendBtn.addEventListener('click', async () => {
-      const phone = phoneInput.value.trim();
-      const text = messageInput.value.trim();
-      if (!phone || !text) {
-        alert("يرجى إدخال رقم واتساب والنص!");
-        return;
-      }
-
-      responseDiv.textContent = "جارٍ الإرسال...";
-
-      try {
-        const res = await fetch('/inbound', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from: phone, text })
-        });
-
-        const data = await res.json();
-        if (data.ok) {
-          responseDiv.textContent = "تم الإرسال بنجاح!\nرد AI:\n" + (data.reply || "");
-        } else {
-          responseDiv.textContent = "حدث خطأ أثناء الإرسال.";
-        }
-      } catch (err) {
-        responseDiv.textContent = "خطأ: " + err.message;
-      }
-    });
-  </script>
+  <script src="/static/js/script.js"></script>
 </body>
 </html>
