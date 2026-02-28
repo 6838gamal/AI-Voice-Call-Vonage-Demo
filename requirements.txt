@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 python-dotenv
 vonage==3.1.0
-vonage-messages==1.0.1
+vonage-messages==1.2.0
 vonage-voice==1.0.1
 google-genai
 
