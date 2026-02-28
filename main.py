@@ -1,5 +1,4 @@
 import os
-import asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -9,10 +8,12 @@ from dotenv import load_dotenv
 import vonage
 from vonage import Voice
 
-import google.generativeai as genai
+from google.genai import Client as GeminiClient
+from google.genai import types
+
 
 # ======================
-# Load ENV
+# ENV
 # ======================
 
 load_dotenv()
@@ -21,16 +22,10 @@ APP_ID = os.getenv("VONAGE_APPLICATION_ID")
 PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
 WHATSAPP_SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
-PORT = int(os.getenv("PORT", 3000))
+PORT = int(os.getenv("PORT", 10000))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
 RENDER_URL = os.getenv("RENDER_URL")
 
-# ======================
-# Gemini
-# ======================
-
-genai.configure(api_key=GEMINI_API_KEY)
 
 # ======================
 # App
@@ -46,6 +41,7 @@ app.mount(
     name="static"
 )
 
+
 # ======================
 # Vonage
 # ======================
@@ -59,6 +55,16 @@ voice = Voice(vonage_client)
 
 messages = vonage.Messages(vonage_client)
 
+
+# ======================
+# Gemini
+# ======================
+
+gemini = GeminiClient(
+    api_key=GEMINI_API_KEY
+)
+
+
 # ======================
 # Logs
 # ======================
@@ -66,26 +72,30 @@ messages = vonage.Messages(vonage_client)
 whatsapp_log = []
 call_log = []
 
+
 # ======================
 # AI
 # ======================
-
 
 def ai_response(prompt: str) -> str:
 
     try:
 
-        model = genai.GenerativeModel(
-            "gemini-1.5-flash"
-        )
+        r = gemini.models.generate_content(
 
-        r = model.generate_content(prompt)
+            model="gemini-1.5-flash",
+
+            contents=prompt,
+
+            config=types.GenerateContentConfig()
+
+        )
 
         return r.text
 
     except Exception as e:
 
-        print(e)
+        print("AI ERROR:", e)
 
         return "I did not understand"
 
@@ -94,42 +104,39 @@ def ai_response(prompt: str) -> str:
 # WhatsApp
 # ======================
 
-
 def send_whatsapp(to, text):
 
     try:
 
         messages.send_message({
 
-            "from": {
-                "type": "whatsapp",
-                "number": WHATSAPP_SANDBOX_NUMBER
-            },
+            "channel": "whatsapp",
 
-            "to": {
-                "type": "whatsapp",
-                "number": to
-            },
+            "from": WHATSAPP_SANDBOX_NUMBER,
+
+            "to": to,
 
             "message_type": "text",
 
             "text": text
+
         })
 
         whatsapp_log.append({
+
             "to": to,
             "text": text
+
         })
 
     except Exception as e:
 
-        print(e)
+        print("WA ERROR:", e)
 
 
 # ======================
 # Report
 # ======================
-
 
 def send_report(to):
 
@@ -147,7 +154,6 @@ Calls: {len(call_log)}
 # Call
 # ======================
 
-
 async def make_call(to_number):
 
     try:
@@ -155,32 +161,39 @@ async def make_call(to_number):
         voice.create_call({
 
             "to": [
+
                 {
                     "type": "phone",
                     "number": to_number
                 }
+
             ],
 
             "from": {
+
                 "type": "phone",
                 "number": VOICE_FROM_NUMBER
             },
 
             "answer_url": [
+
                 f"{RENDER_URL}/answer"
+
             ]
 
         })
 
         call_log.append({
+
             "to": to_number
+
         })
 
         return True
 
     except Exception as e:
 
-        print(e)
+        print("CALL ERROR:", e)
 
         return False
 
@@ -189,26 +202,37 @@ async def make_call(to_number):
 # Answer
 # ======================
 
-
 @app.get("/answer")
 async def answer():
 
     ncco = [
 
         {
+
             "action": "talk",
+
             "text": "Hello, this is AI assistant"
+
         },
 
         {
+
             "action": "input",
+
             "type": ["speech"],
+
             "speech": {
+
                 "language": "en-US"
+
             },
+
             "eventUrl": [
+
                 f"{RENDER_URL}/event"
+
             ]
+
         }
 
     ]
@@ -219,7 +243,6 @@ async def answer():
 # ======================
 # Event
 # ======================
-
 
 @app.post("/event")
 async def event(req: Request):
@@ -248,19 +271,31 @@ async def event(req: Request):
     ncco = [
 
         {
+
             "action": "talk",
+
             "text": text
+
         },
 
         {
+
             "action": "input",
+
             "type": ["speech"],
+
             "speech": {
+
                 "language": "en-US"
+
             },
+
             "eventUrl": [
+
                 f"{RENDER_URL}/event"
+
             ]
+
         }
 
     ]
@@ -271,7 +306,6 @@ async def event(req: Request):
 # ======================
 # Inbound WhatsApp
 # ======================
-
 
 @app.post("/inbound")
 async def inbound(req: Request):
@@ -285,6 +319,7 @@ async def inbound(req: Request):
     text = data.get("text", "")
 
     if not text and "message" in data:
+
         text = data["message"].get(
             "content", {}
         ).get("text", "")
@@ -293,6 +328,9 @@ async def inbound(req: Request):
 
     if not sender:
         return JSONResponse({"ok": False})
+
+
+    # CALL
 
     if text == "call":
 
@@ -313,9 +351,15 @@ async def inbound(req: Request):
         else:
             send_whatsapp(sender, "call failed")
 
+
+    # REPORT
+
     elif text in ["report", "status"]:
 
         send_report(sender)
+
+
+    # AI
 
     else:
 
@@ -333,24 +377,29 @@ async def inbound(req: Request):
 # Web UI
 # ======================
 
-
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
 
     return templates.TemplateResponse(
+
         "index.html",
+
         {
+
             "request": request,
+
             "whatsapp_log": whatsapp_log,
+
             "call_log": call_log
+
         }
+
     )
 
 
 # ======================
 # Status
 # ======================
-
 
 @app.get("/status")
 async def status():
@@ -360,6 +409,7 @@ async def status():
         "whatsapp": len(whatsapp_log),
 
         "calls": len(call_log)
+
     }
 
 
@@ -372,8 +422,13 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
+
         "main:app",
+
         host="0.0.0.0",
+
         port=PORT,
+
         reload=False
+
     )
