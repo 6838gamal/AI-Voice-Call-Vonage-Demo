@@ -4,14 +4,15 @@ from fastapi.responses import JSONResponse
 
 from dotenv import load_dotenv
 
-from vonage import Vonage, Auth, HttpClientOptions
+# Vonage الجديد: استخدم Client بدلاً من Vonage
+from vonage import Client as VonageClient, Auth, HttpClientOptions
 from vonage_messages import WhatsappText
 from vonage_voice import CreateCallRequest, Talk
 
-# Gemini client
+# Gemini
 from google.ai import gemini
 
-# Uvicorn لتشغيل السيرفر
+# uvicorn لتشغيل FastAPI
 import uvicorn
 
 # ======================
@@ -35,14 +36,15 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # ======================
 app = FastAPI()
 
+# Vonage client
 auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
 options = HttpClientOptions(api_host="messages-sandbox.nexmo.com")
-vonage_client = Vonage(auth, options)
+vonage_client = VonageClient(auth, options)
 
 # Gemini client
 gemini_client = gemini.Client(api_key=GEMINI_API_KEY)
 
-# آخر رقم واتساب لاستعماله في المكالمات
+# آخر رقم واتساب
 last_whatsapp_user = None
 
 # ======================
@@ -114,7 +116,7 @@ async def make_call(to_number: str):
         machine_detection="hangup"
     )
 
-    client_voice = Vonage(auth)
+    client_voice = VonageClient(auth)
     client_voice.voice.create_call(call)
 
 # ======================
