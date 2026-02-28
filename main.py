@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 import uvicorn
 
 from vonage import Client as VonageClient
-from vonage_voice import CreateCallRequest
 from google import genai
 
 # ======================
@@ -17,7 +16,6 @@ load_dotenv()
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
 PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
 
-WHATSAPP_SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
 
 BASE_URL = os.getenv("BASE_URL")
@@ -39,39 +37,33 @@ client = VonageClient(
 
 gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-last_user = None
-
 
 # ======================
 # AI
 # ======================
 
-def ai_response(text: str):
+def ai_response(text):
 
-    response = gemini.models.generate_content(
-        model="gemini-1.5-flash",
+    r = gemini.models.generate_content(
+        model="gemini-3.5-flash",
         contents=text,
     )
 
-    return response.text
+    return r.text
 
 
 # ======================
-# INBOUND WHATSAPP
+# INBOUND
 # ======================
 
 @app.post("/inbound")
 async def inbound(req: Request):
 
-    global last_user
-
     data = await req.json()
-
-    sender = data.get("from")
 
     text = (data.get("text") or "").strip()
 
-    last_user = sender
+    sender = data.get("from")
 
     if text.lower() == "call":
 
@@ -86,22 +78,25 @@ async def inbound(req: Request):
 
 def make_call(number):
 
-    call = CreateCallRequest(
+    client.voice.create_call({
 
-        to=[{"type": "phone", "number": number}],
-
-        from_={
-            "type": "phone",
-            "number": VOICE_FROM_NUMBER,
-        },
-
-        answer_url=[
-            f"{BASE_URL}/answer"
+        "to": [
+            {
+                "type": "phone",
+                "number": number
+            }
         ],
 
-    )
+        "from": {
+            "type": "phone",
+            "number": VOICE_FROM_NUMBER
+        },
 
-    client.voice.create_call(call)
+        "answer_url": [
+            f"{BASE_URL}/answer"
+        ]
+
+    })
 
 
 # ======================
@@ -190,7 +185,11 @@ async def status():
 # ======================
 
 def main():
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=PORT,
+    )
 
 
 if __name__ == "__main__":
