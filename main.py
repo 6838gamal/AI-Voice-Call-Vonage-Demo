@@ -8,10 +8,9 @@ import requests
 
 import vonage
 from vonage import Voice
-from config import GEMINI_API_KEY
 
 # ======================
-# ENV
+# Load ENV
 # ======================
 
 load_dotenv()
@@ -22,9 +21,10 @@ WHATSAPP_SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
 PORT = int(os.getenv("PORT", 10000))
 RENDER_URL = os.getenv("RENDER_URL")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # <- المفتاح من البيئة
 
 # ======================
-# App
+# Initialize App
 # ======================
 
 app = FastAPI()
@@ -32,7 +32,7 @@ templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ======================
-# Vonage
+# Vonage Clients
 # ======================
 
 vonage_client = vonage.Client(
@@ -51,7 +51,7 @@ call_log = []
 conversation_log = []
 
 # ======================
-# AI (Gemini Safe)
+# AI - Gemini Safe
 # ======================
 
 def ask_gemini_safe(prompt):
@@ -128,7 +128,7 @@ Calls: {len(call_log)}
     send_whatsapp(to, msg)
 
 # ======================
-# Call
+# Voice Call
 # ======================
 
 async def make_call(to_number):
@@ -145,7 +145,7 @@ async def make_call(to_number):
         return False
 
 # ======================
-# Answer
+# Answer for Vonage Voice
 # ======================
 
 @app.get("/answer")
@@ -169,7 +169,7 @@ async def answer():
     return JSONResponse(ncco)
 
 # ======================
-# Event
+# Event for Voice Input
 # ======================
 
 @app.post("/event")
@@ -179,7 +179,6 @@ async def event(req: Request):
 
     speech = ""
 
-    # ===== قراءة الكلام من جميع التنسيقات المحتملة =====
     try:
         if "speech" in data:
             if isinstance(data["speech"], list) and len(data["speech"]) > 0:
@@ -200,7 +199,7 @@ async def event(req: Request):
         ]
         return JSONResponse(ncco)
 
-    # ===== AI response =====
+    # AI response
     text = ask_gemini_safe(speech)
     print("USER:", speech)
     print("AI:", text)
@@ -235,15 +234,15 @@ async def inbound(req: Request):
         return JSONResponse({"ok": False})
 
     if text == "call":
-        send_whatsapp(sender, "calling...")
+        send_whatsapp(sender, "Calling you now...")
         to = sender
         if not to.startswith("+"):
             to = "+" + to
         ok = await make_call(to)
         if ok:
-            send_whatsapp(sender, "call started")
+            send_whatsapp(sender, "Call started")
         else:
-            send_whatsapp(sender, "call failed")
+            send_whatsapp(sender, "Call failed")
     elif text in ["report", "status"]:
         send_report(sender)
     else:
