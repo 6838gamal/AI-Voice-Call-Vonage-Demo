@@ -3,9 +3,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
-# Vonage Clients
+# Vonage
 from vonage import Client as VonageClient
-from vonage.voice import VoiceClient, Talk
 from vonage.messages import Messages
 
 # Gemini AI
@@ -33,33 +32,36 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # ======================
 app = FastAPI()
 
-# Vonage Clients
+# Vonage Client (messages + voice)
 vonage_client = VonageClient(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
-voice_client = VoiceClient(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
 messages_client = Messages(key=VONAGE_API_KEY, secret=VONAGE_API_SECRET)
 
-# Gemini Client
+# Gemini AI Client
 gemini_client = gemini.Client(api_key=GEMINI_API_KEY)
 
-# Last WhatsApp user (optional)
+# Last WhatsApp user
 last_whatsapp_user = None
 
 # ======================
 # AI RESPONSE
 # ======================
 def ai_response(prompt: str) -> str:
-    """Generate AI text response via Gemini"""
-    response = gemini_client.chat(
-        model="gemini-3.5-flash",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].content
+    """Generate AI response using Gemini"""
+    try:
+        response = gemini_client.chat(
+            model="gemini-3.5-flash",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].content
+    except Exception as e:
+        print(f"[Error] AI response failed: {e}")
+        return "Sorry, I couldn't process your request."
 
 # ======================
 # SEND WHATSAPP
 # ======================
 def send_whatsapp(to: str, text: str):
-    """Send WhatsApp message using the new Messages client"""
+    """Send WhatsApp message"""
     try:
         messages_client.send_message({
             "from": WHATSAPP_SANDBOX_NUMBER,
@@ -74,22 +76,21 @@ def send_whatsapp(to: str, text: str):
 # MAKE VOICE CALL
 # ======================
 async def make_call(to_number: str):
-    """Make AI-powered voice call"""
+    """Make AI-powered voice call via Vonage"""
     try:
-        ai_text = ai_response(
-            "The user requested a call. Give a friendly greeting and short introduction."
-        )
-        talk = Talk(
-            text=ai_text,
-            loop=1,
-            language="en-US"
-        )
-        ncco = [talk.model_dump()]
-        voice_client.create_call(
-            to=[{"type": "phone", "number": to_number}],
-            from_={"type": "phone", "number": VOICE_FROM_NUMBER},
-            ncco=ncco
-        )
+        ai_text = ai_response("The user requested a call. Give a friendly greeting and short introduction.")
+        ncco = [
+            {
+                "action": "talk",
+                "voiceName": "Joanna",
+                "text": ai_text
+            }
+        ]
+        vonage_client.voice.create_call({
+            "to": [{"type": "phone", "number": to_number}],
+            "from": {"type": "phone", "number": VOICE_FROM_NUMBER},
+            "ncco": ncco
+        })
     except Exception as e:
         print(f"[Error] Voice call failed: {e}")
 
