@@ -2,16 +2,18 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
+import asyncio
 
+# ======================
 # Vonage
+# ======================
 from vonage import Client as VonageClient
 from vonage.messages import Messages
 
+# ======================
 # Gemini AI
-from google.ai import gemini
-
-import uvicorn
-import asyncio
+# ======================
+from google_genai import Client as GeminiClient
 
 # ======================
 # Load ENV
@@ -32,12 +34,12 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # ======================
 app = FastAPI()
 
-# Vonage Client (messages + voice)
+# Vonage clients
 vonage_client = VonageClient(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
 messages_client = Messages(key=VONAGE_API_KEY, secret=VONAGE_API_SECRET)
 
-# Gemini AI Client
-gemini_client = gemini.Client(api_key=GEMINI_API_KEY)
+# Gemini AI client
+gemini_client = GeminiClient(api_key=GEMINI_API_KEY)
 
 # Last WhatsApp user
 last_whatsapp_user = None
@@ -61,7 +63,7 @@ def ai_response(prompt: str) -> str:
 # SEND WHATSAPP
 # ======================
 def send_whatsapp(to: str, text: str):
-    """Send WhatsApp message"""
+    """Send WhatsApp message via Vonage"""
     try:
         messages_client.send_message({
             "from": WHATSAPP_SANDBOX_NUMBER,
@@ -125,4 +127,5 @@ async def status():
 # MAIN
 # ======================
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=False)
