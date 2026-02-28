@@ -4,11 +4,11 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
+import requests
 
 import vonage
 from vonage import Voice
-from google.genai import Client as GeminiClient
-from google.genai import types
+from config import GEMINI_API_KEY
 
 # ======================
 # ENV
@@ -21,7 +21,6 @@ PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
 WHATSAPP_SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
 PORT = int(os.getenv("PORT", 10000))
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RENDER_URL = os.getenv("RENDER_URL")
 
 # ======================
@@ -44,12 +43,6 @@ voice = Voice(vonage_client)
 messages = vonage.Messages(vonage_client)
 
 # ======================
-# Gemini
-# ======================
-
-gemini = GeminiClient(api_key=GEMINI_API_KEY)
-
-# ======================
 # Logs
 # ======================
 
@@ -58,30 +51,51 @@ call_log = []
 conversation_log = []
 
 # ======================
-# AI
+# AI (Gemini Safe)
 # ======================
 
-def ai_response(prompt: str) -> str:
+def ask_gemini_safe(prompt):
+    """
+    دالة آمنة للتعامل مع Gemini 2.5 Flash
+    وتستخرج كل النصوص من أي بنية محتملة.
+    """
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    headers = {"Content-Type": "application/json"}
+    params = {"key": GEMINI_API_KEY}
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
     try:
-        system = """
-You are AI assistant for AI engineer and software developer.
-You speak professionally.
-You help users with apps, AI, and software.
-Keep answers short.
-"""
-        full_prompt = system + "\nUser: " + prompt
-        r = gemini.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=full_prompt,
-            config=types.GenerateContentConfig()
-        )
-        text = r.text
-        conversation_log.append({"user": prompt, "ai": text})
-        print("CHAT:", prompt, "->", text)
-        return text
+        response = requests.post(url, headers=headers, params=params, json=payload)
+        response.raise_for_status()
+        result = response.json()
+
+        candidates = result.get("candidates")
+        if not candidates:
+            return "⚠️ لم يتم الحصول على أي رد من الذكاء الاصطناعي."
+
+        text_output = ""
+        for cand in candidates:
+            if "content" in cand:
+                content = cand["content"]
+                if "textSegments" in content:
+                    for seg in content["textSegments"]:
+                        text_output += seg.get("text", "")
+                elif "text" in content:
+                    text_output += content["text"]
+
+        if not text_output.strip():
+            return "⚠️ الذكاء الاصطناعي لم يرجع نصاً قابلاً للعرض."
+
+        conversation_log.append({"user": prompt, "ai": text_output})
+        print("CHAT:", prompt, "->", text_output)
+        return text_output
+
+    except requests.RequestException as e:
+        print("REQUEST ERROR:", e)
+        return "⚠️ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي."
     except Exception as e:
-        print("AI ERROR:", e)
-        return "I did not understand"
+        print("GENERAL ERROR:", e)
+        return "⚠️ حدث خطأ غير متوقع."
 
 # ======================
 # WhatsApp
@@ -176,7 +190,6 @@ async def event(req: Request):
         print("SPEECH PARSE ERROR:", e)
         speech = ""
 
-    # ===== لا يوجد كلام من المستخدم =====
     if not speech:
         print("NO SPEECH")
         print("FULL CHAT:")
@@ -188,7 +201,7 @@ async def event(req: Request):
         return JSONResponse(ncco)
 
     # ===== AI response =====
-    text = ai_response(speech)
+    text = ask_gemini_safe(speech)
     print("USER:", speech)
     print("AI:", text)
 
@@ -234,7 +247,7 @@ async def inbound(req: Request):
     elif text in ["report", "status"]:
         send_report(sender)
     else:
-        reply = ai_response(text)
+        reply = ask_gemini_safe(text)
         send_whatsapp(sender, reply)
 
     return JSONResponse({"ok": True})
