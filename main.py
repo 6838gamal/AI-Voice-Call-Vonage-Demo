@@ -1,14 +1,20 @@
 import os
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
+# Vonage Client
 from vonage import Client as VonageClient
 from vonage_messages import WhatsappText
-from vonage_voice import VoiceClient, Talk  # استخدم VoiceClient الجديد
-from google.ai import gemini
+from vonage_voice import VoiceClient, Talk
 
+# Gemini
+from google.ai import gemini
+import uvicorn
+
+# ======================
+# Load ENV
+# ======================
 load_dotenv()
 
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
@@ -18,13 +24,20 @@ VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
 PORT = int(os.getenv("PORT", 3000))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# ======================
+# Initialize App
+# ======================
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Clients
+# Vonage Client
 vonage_client = VonageClient(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
 voice_client = VoiceClient(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
+
+# Gemini Client
 gemini_client = gemini.Client(api_key=GEMINI_API_KEY)
+
+# Last WhatsApp user
+last_whatsapp_user = None
 
 # ======================
 # AI RESPONSE
@@ -50,53 +63,36 @@ def send_whatsapp(to: str, text: str):
 # ======================
 # MAKE VOICE CALL
 # ======================
-def make_call(to_number: str):
-    ai_text = ai_response("The user requested a call. Give a friendly greeting and short introduction.")
-
+async def make_call(to_number: str):
+    ai_text = ai_response(
+        "The user requested a call. Give a friendly greeting and short introduction."
+    )
     talk = Talk(
         text=ai_text,
         loop=1,
         language="en-US"
     )
-
+    ncco = [talk.model_dump()]
     voice_client.create_call(
         to=[{"type": "phone", "number": to_number}],
         from_={"type": "phone", "number": VOICE_FROM_NUMBER},
-        ncco=[talk.model_dump()]
+        ncco=ncco
     )
-
-# ======================
-# FRONTEND
-# ======================
-@app.get("/")
-async def index():
-    return FileResponse("static/index.html")
-
-@app.post("/send_whatsapp")
-async def send_whatsapp_api(req: Request):
-    data = await req.json()
-    to = data.get("to")
-    text = data.get("text")
-    if not to or not text:
-        return JSONResponse({"ok": False, "error": "Missing 'to' or 'text'"})
-    
-    # AI can optionally reply automatically
-    ai_text = ai_response(text)
-    send_whatsapp(to, ai_text)
-    return JSONResponse({"ok": True, "ai_reply": ai_text})
 
 # ======================
 # INBOUND WHATSAPP
 # ======================
 @app.post("/inbound")
 async def inbound(req: Request):
+    global last_whatsapp_user
     data = await req.json()
     sender = data.get("from")
-    text = (data.get("text") or "").strip().lower()
+    text = (data.get("text") or "").strip()
+    last_whatsapp_user = sender
 
-    if text == "call":
-        send_whatsapp(sender, "Starting a voice call now...")
-        make_call(sender)
+    if text.lower() == "call":
+        send_whatsapp(sender, "Calling you now...")
+        await make_call(sender)
     else:
         reply_text = ai_response(text)
         send_whatsapp(sender, reply_text)
@@ -104,8 +100,14 @@ async def inbound(req: Request):
     return JSONResponse({"ok": True})
 
 # ======================
-# RUN APP
+# STATUS
+# ======================
+@app.get("/status")
+async def status():
+    return JSONResponse({"ok": True})
+
+# ======================
+# MAIN
 # ======================
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=False)
