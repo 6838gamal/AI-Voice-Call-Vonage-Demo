@@ -6,10 +6,10 @@ from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
 import vonage
-from vonage import Voice, Messages
-
+from vonage import Voice
 from google.genai import Client as GeminiClient
 from google.genai import types
+import asyncio
 
 # ======================
 # ENV
@@ -31,7 +31,6 @@ RENDER_URL = os.getenv("RENDER_URL")
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ======================
@@ -40,7 +39,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 vonage_client = vonage.Client(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
 voice = Voice(vonage_client)
-messages = Messages(vonage_client)
+messages = vonage.Messages(vonage_client)
 
 # ======================
 # Gemini
@@ -89,6 +88,19 @@ def send_whatsapp(to, text):
         print("WA ERROR:", e)
 
 # ======================
+# Report
+# ======================
+
+def send_report(to):
+    msg = f"""
+REPORT
+
+WhatsApp: {len(whatsapp_log)}
+Calls: {len(call_log)}
+"""
+    send_whatsapp(to, msg)
+
+# ======================
 # Call
 # ======================
 
@@ -106,7 +118,7 @@ async def make_call(to_number):
         return False
 
 # ======================
-# Answer - welcome & start listening
+# Answer
 # ======================
 
 @app.get("/answer")
@@ -120,24 +132,40 @@ async def answer():
         {
             "action": "input",
             "type": ["speech"],
-            "speech": {"language": "en-US", "endOnSilence": 3, "maxDuration": 60},
+            "speech": {
+                "language": "en-US",
+                "endOnSilence": 3,
+                "maxDuration": 60
+            },
             "eventUrl": [f"{RENDER_URL}/event"]
         }
     ]
     return JSONResponse(ncco)
 
 # ======================
-# Event - AI loop
+# Event
 # ======================
 
 @app.post("/event")
 async def event(req: Request):
-    data = await req.json()
-    print("EVENT RAW:", data)
+    try:
+        data = await req.json()
+        print("EVENT RAW:", data)
+    except Exception as e:
+        print("EVENT PARSE ERROR:", e)
+        return JSONResponse([{
+            "action": "talk",
+            "text": "I did not hear anything. Please try again.",
+        }, {
+            "action": "input",
+            "type": ["speech"],
+            "speech": {"language": "en-US", "endOnSilence": 3, "maxDuration": 60},
+            "eventUrl": [f"{RENDER_URL}/event"]
+        }])
 
     speech_text = ""
     try:
-        speech_text = data["speech"]["results"][0]["text"]
+        speech_text = data.get("speech", {}).get("results", [])[0].get("text", "")
     except:
         speech_text = ""
 
@@ -146,13 +174,8 @@ async def event(req: Request):
     else:
         reply_text = ai_response(speech_text)
 
-    # Always respond with NCCO that keeps listening
     ncco = [
-        {
-            "action": "talk",
-            "text": reply_text,
-            "bargeIn": True
-        },
+        {"action": "talk", "text": reply_text},
         {
             "action": "input",
             "type": ["speech"],
@@ -160,6 +183,7 @@ async def event(req: Request):
             "eventUrl": [f"{RENDER_URL}/event"]
         }
     ]
+
     return JSONResponse(ncco)
 
 # ======================
@@ -168,25 +192,39 @@ async def event(req: Request):
 
 @app.post("/inbound")
 async def inbound(req: Request):
-    data = await req.json()
-    print("INBOUND:", data)
+    try:
+        data = await req.json()
+        print("INBOUND:", data)
+    except Exception as e:
+        print("INBOUND ERROR:", e)
+        return JSONResponse({"ok": False})
 
     sender = data.get("from")
-    text = (data.get("text") or "").lower().strip()
+    text = data.get("text", "")
     if not text and "message" in data:
-        text = data["message"].get("content", {}).get("text", "").lower().strip()
+        text = data["message"].get("content", {}).get("text", "")
 
+    text = (text or "").lower().strip()
     if not sender:
         return JSONResponse({"ok": False})
 
+    # CALL
     if text == "call":
         send_whatsapp(sender, "Calling...")
-        to = sender if sender.startswith("+") else "+" + sender
+        to = sender
+        if not to.startswith("+"):
+            to = "+" + to
         ok = await make_call(to)
-        send_whatsapp(sender, "Call started" if ok else "Call failed")
+        if ok:
+            send_whatsapp(sender, "Call started")
+        else:
+            send_whatsapp(sender, "Call failed")
+
+    # REPORT
     elif text in ["report", "status"]:
-        msg = f"REPORT\nWhatsApp: {len(whatsapp_log)}\nCalls: {len(call_log)}"
-        send_whatsapp(sender, msg)
+        send_report(sender)
+
+    # AI
     else:
         reply = ai_response(text)
         send_whatsapp(sender, reply)
@@ -199,11 +237,10 @@ async def inbound(req: Request):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "whatsapp_log": whatsapp_log,
-        "call_log": call_log
-    })
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "whatsapp_log": whatsapp_log, "call_log": call_log}
+    )
 
 # ======================
 # Status
