@@ -21,7 +21,7 @@ vonage-voice==1.4.0
 Jinja2
 
 #google-generativeai
-#python-multipart
+python-multipart
 
 #vonage-utils
 
