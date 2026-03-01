@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-vonage
+vonage>=4.0.0
 vonage-messages==1.2.0
 vonage-voice==1.4.0
 
