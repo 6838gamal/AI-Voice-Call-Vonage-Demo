@@ -11,7 +11,7 @@ from vonage import Voice
 
 
 # ======================
-# Load ENV
+# ENV
 # ======================
 
 load_dotenv()
@@ -26,7 +26,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 
 # ======================
-# App
+# APP
 # ======================
 
 app = FastAPI()
@@ -37,7 +37,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # ======================
-# Vonage
+# VONAGE
 # ======================
 
 vonage_client = vonage.Client(
@@ -50,7 +50,7 @@ messages = vonage.Messages(vonage_client)
 
 
 # ======================
-# Logs
+# LOGS
 # ======================
 
 whatsapp_log = []
@@ -59,40 +59,22 @@ conversation_log = []
 
 
 # ======================
-# Gemini
+# GEMINI
 # ======================
 
 def ask_gemini_safe(prompt):
 
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
-    headers = {
-        "Content-Type": "application/json"
-    }
-
-    params = {
-        "key": GEMINI_API_KEY
-    }
-
-    system_prompt = """
-You are a smart AI assistant talking to users on phone calls and WhatsApp.
-
-Rules:
-- reply short
-- reply clear
-- no markdown
-- speak like human
-- support Arabic and English
-- understand speech mistakes
-"""
-
     payload = {
         "contents": [
             {
-                "role": "user",
                 "parts": [
                     {
-                        "text": system_prompt + "\nUser: " + prompt
+                        "text":
+                        "You are AI assistant in phone call. "
+                        "Reply short and clear. "
+                        "User: " + prompt
                     }
                 ]
             }
@@ -103,12 +85,9 @@ Rules:
 
         r = requests.post(
             url,
-            headers=headers,
-            params=params,
+            params={"key": GEMINI_API_KEY},
             json=payload,
         )
-
-        r.raise_for_status()
 
         data = r.json()
 
@@ -121,43 +100,34 @@ Rules:
         if not text:
             text = "Sorry, I did not understand."
 
-        conversation_log.append(
-            {"user": prompt, "ai": text}
-        )
-
         return text
 
     except Exception as e:
-        print("AI ERROR:", e)
-        return "Error talking to AI"
+
+        print(e)
+
+        return "Error"
 
 
 # ======================
-# WhatsApp
+# WHATSAPP
 # ======================
 
 def send_whatsapp(to, text):
 
-    try:
+    messages.send_message({
+        "channel": "whatsapp",
+        "from": WHATSAPP_SANDBOX_NUMBER,
+        "to": to,
+        "message_type": "text",
+        "text": text
+    })
 
-        messages.send_message({
-            "channel": "whatsapp",
-            "from": WHATSAPP_SANDBOX_NUMBER,
-            "to": to,
-            "message_type": "text",
-            "text": text
-        })
-
-        whatsapp_log.append(
-            {"to": to, "text": text}
-        )
-
-    except Exception as e:
-        print(e)
+    whatsapp_log.append({"to": to})
 
 
 # ======================
-# Report
+# REPORT
 # ======================
 
 def send_report(to):
@@ -173,32 +143,26 @@ Calls: {len(call_log)}
 
 
 # ======================
-# Call
+# CALL
 # ======================
 
 async def make_call(to_number):
 
-    try:
+    url = f"{RENDER_URL}/answer"
 
-        voice.create_call({
-            "to": [{"type": "phone", "number": to_number}],
-            "from": {"type": "phone", "number": VOICE_FROM_NUMBER},
-            "answer_url": [f"{RENDER_URL}/answer"]
-        })
+    print("ANSWER URL:", url)
 
-        call_log.append({"to": to_number})
+    voice.create_call({
+        "to": [{"type": "phone", "number": to_number}],
+        "from": {"type": "phone", "number": VOICE_FROM_NUMBER},
+        "answer_url": [url],
+    })
 
-        return True
-
-    except Exception as e:
-
-        print(e)
-
-        return False
+    call_log.append({"to": to_number})
 
 
 # ======================
-# ANSWER (UPDATED)
+# ANSWER
 # ======================
 
 @app.get("/answer")
@@ -208,17 +172,18 @@ async def answer():
 
         {
             "action": "talk",
-            "text": "Hello. This is your AI assistant. I am ready to help you. Please speak after the beep.",
-            "bargeIn": False
+            "text": "Hello. This is your AI assistant. Please speak.",
+            "voiceName": "Amy",
+            "bargeIn": True
         },
 
         {
             "action": "input",
             "type": ["speech"],
             "speech": {
-                "language": "en-US",
-                "endOnSilence": 2,
-                "maxDuration": 60
+                "endOnSilence": 1,
+                "maxDuration": 60,
+                "language": "en-US"
             },
             "eventUrl": [f"{RENDER_URL}/event"]
         }
@@ -229,13 +194,17 @@ async def answer():
 
 
 # ======================
-# EVENT (UPDATED)
+# EVENT
 # ======================
 
 @app.post("/event")
 async def event(req: Request):
 
-    data = await req.json()
+    try:
+        data = await req.json()
+    except:
+        form = await req.form()
+        data = dict(form)
 
     print("EVENT:", data)
 
@@ -257,20 +226,24 @@ async def event(req: Request):
     if not speech:
 
         return JSONResponse([
+
             {
                 "action": "talk",
-                "text": "I did not hear you. Please speak again."
+                "text": "I did not hear you",
+                "voiceName": "Amy"
             },
+
             {
                 "action": "input",
                 "type": ["speech"],
                 "speech": {
-                    "language": "en-US",
-                    "endOnSilence": 2,
-                    "maxDuration": 60
+                    "endOnSilence": 1,
+                    "maxDuration": 60,
+                    "language": "en-US"
                 },
                 "eventUrl": [f"{RENDER_URL}/event"]
             }
+
         ])
 
 
@@ -281,16 +254,17 @@ async def event(req: Request):
 
         {
             "action": "talk",
-            "text": reply
+            "text": reply,
+            "voiceName": "Amy"
         },
 
         {
             "action": "input",
             "type": ["speech"],
             "speech": {
-                "language": "en-US",
-                "endOnSilence": 2,
-                "maxDuration": 60
+                "endOnSilence": 1,
+                "maxDuration": 60,
+                "language": "en-US"
             },
             "eventUrl": [f"{RENDER_URL}/event"]
         }
@@ -301,7 +275,7 @@ async def event(req: Request):
 
 
 # ======================
-# WhatsApp inbound
+# INBOUND
 # ======================
 
 @app.post("/inbound")
@@ -312,28 +286,11 @@ async def inbound(req: Request):
     sender = data.get("from")
     text = data.get("text", "")
 
-    if not sender:
-        return JSONResponse({"ok": False})
-
-    text = (text or "").lower().strip()
-
     if text == "call":
 
-        send_whatsapp(sender, "Calling you now")
+        await make_call(sender)
 
-        to = sender
-
-        if not to.startswith("+"):
-            to = "+" + to
-
-        ok = await make_call(to)
-
-        if ok:
-            send_whatsapp(sender, "Call started")
-        else:
-            send_whatsapp(sender, "Call failed")
-
-    elif text in ["report", "status"]:
+    elif text == "report":
 
         send_report(sender)
 
@@ -347,7 +304,7 @@ async def inbound(req: Request):
 
 
 # ======================
-# Web
+# WEB
 # ======================
 
 @app.get("/", response_class=HTMLResponse)
@@ -358,26 +315,26 @@ async def index(request: Request):
         {
             "request": request,
             "whatsapp_log": whatsapp_log,
-            "call_log": call_log
+            "call_log": call_log,
         }
     )
 
 
 # ======================
-# Status
+# STATUS
 # ======================
 
 @app.get("/status")
 async def status():
 
     return {
-        "whatsapp": len(whatsapp_log),
-        "calls": len(call_log)
+        "calls": len(call_log),
+        "whatsapp": len(whatsapp_log)
     }
 
 
 # ======================
-# Main
+# MAIN
 # ======================
 
 if __name__ == "__main__":
