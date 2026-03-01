@@ -2,8 +2,9 @@ import os
 from datetime import datetime, date
 from fastapi import FastAPI, Request, Response
 from dotenv import load_dotenv
-# استخدام العميل الجديد Client والمكتبة الصوتية فقط
-from vonage import Auth, Client
+
+# التغيير هنا: استيراد Vonage بدلاً من Client في الإصدارات الحديثة
+from vonage import Auth, Vonage
 from vonage_voice import CreateCallRequest, Talk, Input, Dtmf
 
 # تحميل متغيرات البيئة
@@ -17,13 +18,13 @@ BASE_URL = os.getenv("BASE_URL")
 
 app = FastAPI()
 
-# إعداد المصادقة
+# إعداد المصادقة باستخدام الكلاس المحدث
 auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
-vonage_client = Client(auth)
+# في إصدار 4.x الكلاس يسمى Vonage
+vonage_client = Vonage(auth)
 
 @app.get("/dial")
 async def dial():
-    # إنشاء رسالة الترحيب وطلب المدخلات
     talk_action = Talk(
         text='Hello! Please enter your birthday as two-digit month, two-digit day, and four-digit year, then press pound.',
         loop=1,
@@ -37,18 +38,17 @@ async def dial():
         eventMethod='POST'
     )
     
-    # تحويل الكائنات إلى قواميس (Dictionaries) كما تدعم المكتبة الحديثة
     ncco = [talk_action.model_dump(), dtmf_input.model_dump()]
 
     call = CreateCallRequest(
         to=[{'type': 'phone', 'number': TO_NUMBER}],
-        # يمكنك استخدام رقمك الخاص أو random_from_number=True كما في مثالك
         from_={'type': 'phone', 'number': VOICE_FROM_NUMBER} if VOICE_FROM_NUMBER else None,
         random_from_number=True if not VOICE_FROM_NUMBER else False,
         ncco=ncco,
         machine_detection='hangup'
     )
 
+    # استدعاء خدمة الصوت
     response = vonage_client.voice.create_call(call)
     return response.model_dump()
 
@@ -64,13 +64,11 @@ async def birthday(request: Request):
     else:
         text = f"Your birthday is in {days_until} days and you will be {next_age} years old! Thank you for calling."
 
-    # إنشاء NCCO للرد الصوتي النهائي
     talk_response = Talk(text=text, loop=1, language='en-US')
     return [talk_response.model_dump()]
 
 @app.post("/events")
 async def events(request: Request):
-    # مسار لمراقبة حالة المكالمة (ضروري لتجنب أخطاء 404 في سجلات فوناج)
     return Response(status_code=204)
 
 def get_birthday_data(dtmf_digits: str):
@@ -92,6 +90,6 @@ def get_birthday_data(dtmf_digits: str):
 
 if __name__ == "__main__":
     import uvicorn
-    # التوافق مع منفذ Render
+    # التأكد من استخدام منفذ Render الصحيح
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
