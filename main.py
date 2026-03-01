@@ -6,7 +6,7 @@ from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
 import vonage
-from vonage import Voice
+from vonage import Voice, Messages
 
 from google.genai import Client as GeminiClient
 from google.genai import types
@@ -29,7 +29,6 @@ RENDER_URL = os.getenv("RENDER_URL")
 # ======================
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ======================
@@ -37,7 +36,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # ======================
 vonage_client = vonage.Client(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
 voice = Voice(vonage_client)
-messages = vonage.Messages(vonage_client)
+messages = Messages(vonage_client)
 
 # ======================
 # Gemini
@@ -85,7 +84,7 @@ def send_whatsapp(to, text):
 # Report
 # ======================
 def send_report(to):
-    msg = f"REPORT\n\nWhatsApp: {len(whatsapp_log)}\nCalls: {len(call_log)}"
+    msg = f"REPORT\nWhatsApp: {len(whatsapp_log)}\nCalls: {len(call_log)}"
     send_whatsapp(to, msg)
 
 # ======================
@@ -105,52 +104,55 @@ async def make_call(to_number):
         return False
 
 # ======================
-# Answer Endpoint
+# Answer (start call NCCO)
 # ======================
 @app.get("/answer")
 async def answer():
     ncco = [
         {
             "action": "talk",
-            "text": "Hello! This is your AI assistant. I am listening to you. Please speak after the beep.",
-            "bargeIn": True
+            "text": "Hello! I am your AI assistant. I am listening to you now. Please speak after the beep.",
+            "bargeIn": True,
+            "loop": 1
         },
         {
             "action": "input",
             "type": ["speech"],
-            "speech": {"language": "en-US", "endOnSilence": 3, "maxDuration": 60},
+            "speech": {
+                "language": "en-US",
+                "endOnSilence": 5,
+                "maxDuration": 60
+            },
             "eventUrl": [f"{RENDER_URL}/event"]
         }
     ]
     return JSONResponse(ncco)
 
 # ======================
-# Event Endpoint
+# Event (handle speech)
 # ======================
 @app.post("/event")
 async def event(req: Request):
     data = await req.json()
     print("EVENT RAW:", data)
 
-    speech_text = ""
+    speech = ""
     try:
-        speech_text = data["speech"]["results"][0]["text"]
-    except:
-        speech_text = ""
+        speech = data.get("speech", {}).get("results", [{}])[0].get("text", "")
+    except Exception:
+        speech = ""
 
-    print("Detected speech:", speech_text)
-
-    if not speech_text.strip():
-        reply_text = "I didn't hear you. Please try speaking again."
+    if not speech:
+        text = "I did not hear you. Please say that again."
     else:
-        reply_text = ai_response(speech_text)
+        text = ai_response(speech)
 
     ncco = [
-        {"action": "talk", "text": reply_text, "bargeIn": True},
+        {"action": "talk", "text": text, "bargeIn": True},
         {
             "action": "input",
             "type": ["speech"],
-            "speech": {"language": "en-US", "endOnSilence": 3, "maxDuration": 60},
+            "speech": {"language": "en-US", "endOnSilence": 5, "maxDuration": 60},
             "eventUrl": [f"{RENDER_URL}/event"]
         }
     ]
@@ -189,11 +191,10 @@ async def inbound(req: Request):
 # ======================
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "whatsapp_log": whatsapp_log,
-        "call_log": call_log
-    })
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "whatsapp_log": whatsapp_log, "call_log": call_log}
+    )
 
 # ======================
 # Status
