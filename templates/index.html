@@ -1,24 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI WhatsApp & Voice</title>
-  <link rel="stylesheet" href="/static/css/style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vonage Birthday Call</title>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h2>AI WhatsApp & Voice</h2>
-
-  <label>رقم واتساب (مثال: +96777xxxxxxx)</label>
-  <input type="text" id="phone" placeholder="Enter phone number">
-
-  <label>نص الرسالة أو اكتب 'call' لإجراء مكالمة</label>
-  <textarea id="message" placeholder="Enter your message"></textarea>
-
-  <button id="sendBtn">إرسال</button>
-
-  <div id="response"></div>
-
-  <script src="/static/js/script.js"></script>
+    <div class="container">
+        <h1>AI Birthday Countdown</h1>
+        <p>Enter your phone number to receive a call from our AI.</p>
+        
+        <form action="/dial" method="post">
+            <input type="tel" name="phone" placeholder="e.g. 966500000000" required>
+            <button type="submit">Start Call</button>
+        </form>
+    </div>
 </body>
 </html>
