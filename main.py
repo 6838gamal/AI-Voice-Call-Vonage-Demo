@@ -4,12 +4,14 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
-import requests
+
 import vonage
 from vonage import Voice
+from google.genai import Client as GeminiClient
+from google.genai import types
 
 # ======================
-# Load ENV
+# ENV
 # ======================
 load_dotenv()
 
@@ -18,76 +20,54 @@ PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
 WHATSAPP_SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
 PORT = int(os.getenv("PORT", 10000))
-RENDER_URL = os.getenv("RENDER_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+RENDER_URL = os.getenv("RENDER_URL")
 
 # ======================
-# Initialize App
+# App
 # ======================
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ======================
-# Vonage Clients
+# Vonage
 # ======================
-vonage_client = vonage.Client(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
+vonage_client = vonage.Client(
+    application_id=APP_ID,
+    private_key=PRIVATE_KEY_PATH,
+)
 voice = Voice(vonage_client)
 messages = vonage.Messages(vonage_client)
+
+# ======================
+# Gemini 2.5 Flash
+# ======================
+gemini = GeminiClient(api_key=GEMINI_API_KEY)
+
+def ai_response(prompt: str) -> str:
+    try:
+        r = gemini.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig()
+        )
+        return r.text
+    except Exception as e:
+        print("AI ERROR:", e)
+        return "I did not understand"
 
 # ======================
 # Logs
 # ======================
 whatsapp_log = []
 call_log = []
-conversation_log = []
-
-# ======================
-# AI - Gemini Safe
-# ======================
-def ask_gemini_safe(prompt):
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-    headers = {"Content-Type": "application/json"}
-    params = {"key": GEMINI_API_KEY}
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-
-    try:
-        response = requests.post(url, headers=headers, params=params, json=payload)
-        response.raise_for_status()
-        result = response.json()
-        candidates = result.get("candidates")
-        if not candidates:
-            return "⚠️ لم يتم الحصول على أي رد من الذكاء الاصطناعي."
-
-        text_output = ""
-        for cand in candidates:
-            if "content" in cand:
-                content = cand["content"]
-                if "textSegments" in content:
-                    for seg in content["textSegments"]:
-                        text_output += seg.get("text", "")
-                elif "text" in content:
-                    text_output += content["text"]
-
-        if not text_output.strip():
-            return "⚠️ الذكاء الاصطناعي لم يرجع نصاً قابلاً للعرض."
-
-        conversation_log.append({"user": prompt, "ai": text_output})
-        print("CHAT:", prompt, "->", text_output)
-        return text_output
-
-    except Exception as e:
-        print("AI ERROR:", e)
-        return "⚠️ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي."
 
 # ======================
 # WhatsApp
 # ======================
 def send_whatsapp(to, text):
     try:
-        # اصلاح الصيغة
-        if not to.startswith("whatsapp:"):
-            to = "whatsapp:" + to.lstrip("+")
         messages.send_message({
             "channel": "whatsapp",
             "from": WHATSAPP_SANDBOX_NUMBER,
@@ -96,12 +76,18 @@ def send_whatsapp(to, text):
             "text": text
         })
         whatsapp_log.append({"to": to, "text": text})
-        print(f"WHATSAPP SENT -> {to}: {text}")
     except Exception as e:
-        print("WHATSAPP ERROR:", e)
+        print("WA ERROR:", e)
 
 # ======================
-# Voice Call
+# Report
+# ======================
+def send_report(to):
+    msg = f"REPORT\nWhatsApp: {len(whatsapp_log)}\nCalls: {len(call_log)}"
+    send_whatsapp(to, msg)
+
+# ======================
+# Call
 # ======================
 async def make_call(to_number):
     try:
@@ -111,70 +97,78 @@ async def make_call(to_number):
             "answer_url": [f"{RENDER_URL}/answer"]
         })
         call_log.append({"to": to_number})
-        print(f"CALL INITIATED -> {to_number}")
         return True
     except Exception as e:
         print("CALL ERROR:", e)
         return False
 
 # ======================
-# Vonage Voice Answer
+# Answer
 # ======================
 @app.get("/answer")
 async def answer():
     ncco = [
-        {
-            "action": "talk",
-            "text": "Hello! This is your AI assistant. I am ready to help you. Please speak after the beep.",
-            "bargeIn": False
-        },
-        {
-            "action": "input",
-            "type": ["speech"],
-            "speech": {
-                "language": "en-US",
-                "endOnSilence": 2,
-                "maxDuration": 60
-            },
-            "eventUrl": [f"{RENDER_URL}/event"]
-        }
+        {"action": "talk", "text": "Hello, this is your AI assistant. Please speak after the beep."},
+        {"action": "input",
+         "type": ["speech"],
+         "speech": {"language": "en-US", "endOnSilence": 2, "maxDuration": 60},
+         "eventUrl": [f"{RENDER_URL}/event"]}
     ]
     return JSONResponse(ncco)
 
 # ======================
-# Voice Event
+# Event
 # ======================
+MAX_ATTEMPTS = 3
+call_attempts = {}  # تتبع المحاولات لكل مكالمة
+
 @app.post("/event")
 async def event(req: Request):
     data = await req.json()
     print("EVENT RAW:", data)
 
+    conversation_uuid = data.get("conversation_uuid")
     speech_text = ""
+
     try:
-        if "speech" in data:
-            speech_data = data["speech"]
-            if isinstance(speech_data, list) and len(speech_data) > 0:
-                speech_text = speech_data[0].get("results", [{}])[0].get("text", "")
-            elif isinstance(speech_data, dict):
-                speech_text = speech_data.get("results", [{}])[0].get("text", "")
-    except Exception as e:
-        print("SPEECH PARSE ERROR:", e)
+        speech_text = data["speech"]["results"][0]["text"]
+    except:
         speech_text = ""
 
+    attempts = call_attempts.get(conversation_uuid, 0)
+
     if not speech_text:
-        ncco = [{"action": "talk", "text": "Thanks for contacting us. Goodbye"}]
+        attempts += 1
+        call_attempts[conversation_uuid] = attempts
+
+        if attempts >= MAX_ATTEMPTS:
+            text = "I still cannot hear you. Please try again later."
+            call_attempts[conversation_uuid] = 0
+            ncco = [{"action": "talk", "text": text}]
+        else:
+            text = "I did not hear you, please speak again."
+            ncco = [
+                {"action": "talk", "text": text},
+                {"action": "input",
+                 "type": ["speech"],
+                 "speech": {"language": "en-US", "endOnSilence": 2, "maxDuration": 60},
+                 "eventUrl": [f"{RENDER_URL}/event"]}
+            ]
         return JSONResponse(ncco)
 
-    reply = ask_gemini_safe(speech_text)
+    # تم سماع الكلام
+    reply = ai_response(speech_text)
+    print("AI REPLY:", reply)
+
     ncco = [
         {"action": "talk", "text": reply},
-        {
-            "action": "input",
-            "type": ["speech"],
-            "speech": {"language": "en-US", "endOnSilence": 2, "maxDuration": 60},
-            "eventUrl": [f"{RENDER_URL}/event"]
-        }
+        {"action": "input",
+         "type": ["speech"],
+         "speech": {"language": "en-US", "endOnSilence": 2, "maxDuration": 60},
+         "eventUrl": [f"{RENDER_URL}/event"]}
     ]
+
+    call_attempts[conversation_uuid] = 0
     return JSONResponse(ncco)
 
 # ======================
@@ -182,31 +176,29 @@ async def event(req: Request):
 # ======================
 @app.post("/inbound")
 async def inbound(req: Request):
-    try:
-        data = await req.json()
-    except Exception as e:
-        print("INBOUND PARSE ERROR:", e)
-        return JSONResponse({"ok": False})
+    data = await req.json()
+    print("INBOUND:", data)
 
     sender = data.get("from")
-    text = data.get("text") or data.get("message", {}).get("content", {}).get("text", "")
-    text = (text or "").lower().strip()
+    text = (data.get("text") or "").lower().strip()
+    if not text and "message" in data:
+        text = data["message"].get("content", {}).get("text", "").lower().strip()
 
     if not sender:
         return JSONResponse({"ok": False})
 
     if text == "call":
-        send_whatsapp(sender, "Calling you now...")
-        to = sender
-        if not to.startswith("+"):
-            to = "+" + to
+        send_whatsapp(sender, "Calling...")
+        to = sender if sender.startswith("+") else "+" + sender
         ok = await make_call(to)
-        send_whatsapp(sender, "Call started" if ok else "Call failed")
+        if ok:
+            send_whatsapp(sender, "Call started")
+        else:
+            send_whatsapp(sender, "Call failed")
     elif text in ["report", "status"]:
-        msg = f"WhatsApp messages sent: {len(whatsapp_log)}\nCalls made: {len(call_log)}"
-        send_whatsapp(sender, msg)
+        send_report(sender)
     else:
-        reply = ask_gemini_safe(text)
+        reply = ai_response(text)
         send_whatsapp(sender, reply)
 
     return JSONResponse({"ok": True})
@@ -216,10 +208,9 @@ async def inbound(req: Request):
 # ======================
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "whatsapp_log": whatsapp_log, "call_log": call_log}
-    )
+    return templates.TemplateResponse("index.html", {"request": request,
+                                                     "whatsapp_log": whatsapp_log,
+                                                     "call_log": call_log})
 
 # ======================
 # Status
