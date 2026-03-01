@@ -1,130 +1,124 @@
 import os
-import re
-from datetime import datetime, date
-from fastapi import FastAPI, Request, Response, Form
-from fastapi.responses import HTMLResponse
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
-# استيراد المكتبة الأساسية
-from vonage import Auth, Vonage
+# التحديث ليتوافق مع Vonage v4.0+
+from vonage import Vonage
+from vonage_utils import Auth
+from vonage_voice import CreateCallRequest
+from google.genai import Client as GeminiClient
 
+# =========================
+# Configuration & ENV
+# =========================
 load_dotenv()
 
-app = FastAPI()
+APP_ID = os.getenv("VONAGE_APPLICATION_ID")
+# نصيحة: ضع محتوى ملف الـ .key في متغير بيئي اسمه VONAGE_PRIVATE_KEY
+PRIVATE_KEY = os.getenv("VONAGE_PRIVATE_KEY", "").replace('\\n', '\n') 
+VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
+RENDER_URL = os.getenv("RENDER_URL")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+PORT = int(os.getenv("PORT", 10000))
 
-# إعداد المجلدات مع فحص وجودها لتجنب المشاكل
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+# =========================
+# Initialize Clients
+# =========================
+app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-def get_vonage_client():
-    """وظيفة للتحقق من المفاتيح وتهيئة العميل"""
-    app_id = os.getenv("VONAGE_APPLICATION_ID")
-    priv_key = os.getenv("VONAGE_PRIVATE_KEY")
-    
-    # محاولة قراءة المفتاح من ملف إذا لم يوجد في المتغيرات
-    if not priv_key:
-        key_path = os.getenv("VONAGE_PRIVATE_KEY_PATH", "private.key")
-        if os.path.exists(key_path):
-            with open(key_path, 'r') as f:
-                priv_key = f.read()
-    
-    if not app_id or not priv_key:
-        return None
-    
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# إعداد المصادقة باستخدام النص مباشرة أو المسار
+auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY)
+vonage_client = Vonage(auth)
+gemini = GeminiClient(api_key=GEMINI_API_KEY)
+
+# مخزن الجلسات (سياق المحادثة)
+chat_sessions = {}
+call_log = []
+
+# =========================
+# AI & NCCO Logic
+# =========================
+def get_ai_response(session_id: str, text: str):
     try:
-        auth = Auth(application_id=app_id, private_key=priv_key)
-        return Vonage(auth)
+        if session_id not in chat_sessions:
+            chat_sessions[session_id] = gemini.chats.create(model="gemini-2.0-flash")
+        
+        response = chat_sessions[session_id].send_message(text)
+        return response.text
     except Exception as e:
-        print(f"Auth Initialization Error: {e}")
-        return None
+        print(f"AI ERROR: {e}")
+        return "I'm sorry, I'm having trouble thinking. Can you repeat that?"
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-@app.post("/dial")
-async def dial(request: Request):
-    client = get_vonage_client()
-    if not client:
-        return templates.TemplateResponse("index.html", {
-            "request": request, 
-            "message": "❌ Configuration Error: Missing Application ID or Private Key in Render settings!"
-        })
-
-    form_data = await request.form()
-    to_number_raw = form_data.get("phone")
-    if not to_number_raw:
-        return templates.TemplateResponse("index.html", {"request": request, "message": "Please enter a phone number."})
-
-    # تنظيف الأرقام
-    clean_to = re.sub(r'\D', '', to_number_raw)
-    from_number = re.sub(r'\D', '', os.getenv("VONAGE_FROM_NUMBER", "967774440982"))
-
-    ncco = [
+def generate_ncco(text: str):
+    return [
         {
             "action": "talk",
-            "text": "Hello! This is your AI birthday assistant. Please enter your birth date as 8 digits, then press hash.",
-            "language": "en-US"
+            "text": text,
+            "language": "en-US",
+            "bargeIn": True
         },
         {
             "action": "input",
-            "type": ["dtmf"],
-            "dtmf": {"timeOut": 10, "maxDigits": 8, "submitOnHash": True},
-            "eventUrl": [f"{os.getenv('BASE_URL')}/birthday"],
+            "type": ["speech"],
+            "speech": {
+                "language": "en-US",
+                "endOnSilence": 1.5,
+                "maxDuration": 60
+            },
+            "eventUrl": [f"{RENDER_URL}/event"],
             "eventMethod": "POST"
         }
     ]
 
-    # القاموس النهائي (from بدون شرطة سفلية)
-    payload = {
-        "to": [{"type": "phone", "number": clean_to}],
-        "from": {"type": "phone", "number": from_number},
-        "ncco": ncco
-    }
+# =========================
+# Routes
+# =========================
 
-    try:
-        response = client.voice.create_call(payload)
-        return templates.TemplateResponse("index.html", {
-            "request": request, 
-            "message": f"✅ Success! Call initiated. UUID: {response.get('uuid')}"
-        })
-    except Exception as e:
-        return templates.TemplateResponse("index.html", {
-            "request": request, 
-            "message": f"❌ Vonage API Error: {str(e)}"
-        })
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
 
-@app.post("/birthday")
-async def birthday(request: Request):
-    data = await request.json()
-    dtmf_digits = data.get("dtmf", {}).get("digits", "")
-    days_until, next_age = get_birthday_data(dtmf_digits)
-    
-    if days_until is not None:
-        text = f"Your birthday is in {days_until} days and you will be {next_age}! Goodbye."
+@app.post("/event")
+async def voice_event(req: Request):
+    data = await req.json()
+    speech_results = data.get("speech", {}).get("results", [])
+    call_uuid = data.get("uuid")
+
+    if speech_results:
+        user_input = speech_results[0].get("text")
+        ai_reply = get_ai_response(call_uuid, user_input)
     else:
-        text = "Sorry, I couldn't understand the date. Goodbye."
-    
-    return [{"action": "talk", "text": text}]
+        ai_reply = "I didn't hear anything. Are you still there?"
 
-@app.post("/events")
-async def events():
-    return Response(status_code=204)
+    return JSONResponse(generate_ncco(ai_reply))
 
-def get_birthday_data(dtmf_digits: str):
-    if len(dtmf_digits) != 8: return None, None
-    try:
-        bday = datetime.strptime(dtmf_digits, "%m%d%Y").date()
-        today = date.today()
-        next_bday = bday.replace(year=today.year)
-        if next_bday < today: next_bday = next_bday.replace(year=today.year + 1)
-        return (next_bday - today).days, next_bday.year - bday.year
-    except: return None, None
+@app.post("/inbound")
+async def inbound(req: Request):
+    data = await req.json()
+    sender = data.get("from")
+    text = (data.get("text") or "").lower().strip()
+
+    if text == "call" and sender:
+        to_num = sender if sender.startswith("+") else f"+{sender}"
+        ncco = generate_ncco("Hello! This is your AI assistant. How can I help you?")
+        
+        call_req = CreateCallRequest(
+            to=[{"type": "phone", "number": to_num}],
+            from_={"type": "phone", "number": VOICE_FROM_NUMBER},
+            ncco=ncco
+        )
+        vonage_client.voice.create_call(call_req)
+        call_log.append({"to": to_num, "status": "Connected"})
+        
+    return {"status": "ok"}
 
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
