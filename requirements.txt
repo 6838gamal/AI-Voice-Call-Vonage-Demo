@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-vonage
+vonage>=4.1.0
 vonage-messages==1.2.0
 vonage-voice==1.4.0
 google-genai
@@ -9,3 +9,5 @@ Jinja2
 
 google-generativeai
 python-multipart
+
+vonage-utils
