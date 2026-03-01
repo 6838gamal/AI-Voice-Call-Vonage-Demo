@@ -6,19 +6,18 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
-# استيراد الأدوات المطلوبة بدقة من مكتبة فوناج 4.x
+# استيراد المكونات الصحيحة للإصدار الحالي
 from vonage import Auth, Vonage
-from vonage_voice import CreateCallRequest, Talk, Input, Dtmf, Endpoint
+from vonage_voice import CreateCallRequest, Talk, Input, Dtmf, PhoneEndpoint
 
 load_dotenv()
 
 app = FastAPI()
 
-# إعداد المجلدات
+# تأكد من وجود المجلدات static و templates في مشروعك
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# إعداد العميل
 auth = Auth(application_id=os.getenv("VONAGE_APPLICATION_ID"), private_key=os.getenv("VONAGE_PRIVATE_KEY_PATH"))
 vonage_client = Vonage(auth)
 
@@ -31,11 +30,9 @@ async def dial(request: Request):
     form_data = await request.form()
     raw_number = form_data.get("phone") or os.getenv("TO_NUMBER")
     
-    # --- تنظيف الرقم تلقائياً ---
-    # يزيل (+) و (المسافات) وأي رموز غير رقمية
+    # تنظيف الرقم
     clean_number = "".join(filter(str.isdigit, raw_number))
     
-    # إعداد الـ NCCO
     talk_action = Talk(
         text='Hello! Please enter your birthday as two-digit month, two-digit day, and four-digit year, then press pound.',
         language='en-US'
@@ -50,17 +47,16 @@ async def dial(request: Request):
     
     ncco = [talk_action.model_dump(), dtmf_input.model_dump()]
 
-    # --- استخدام Endpoint.Phone لتجنب أخطاء التحقق ---
+    # استخدام PhoneEndpoint بدلاً من Endpoint.Phone
     call = CreateCallRequest(
-        to=[Endpoint.Phone(number=clean_number)],
-        from_=Endpoint.Phone(number=os.getenv("VONAGE_FROM_NUMBER")),
+        to=[PhoneEndpoint(number=clean_number)],
+        from_=PhoneEndpoint(number=os.getenv("VONAGE_FROM_NUMBER")),
         ncco=ncco,
         machine_detection='hangup'
     )
 
     try:
         response = vonage_client.voice.create_call(call)
-        # العودة للصفحة الرئيسية مع رسالة نجاح
         return templates.TemplateResponse("index.html", {
             "request": request, 
             "message": f"Success! Calling {clean_number}..."
@@ -75,14 +71,9 @@ async def dial(request: Request):
 async def birthday(request: Request):
     data = await request.json()
     dtmf_digits = data.get("dtmf", {}).get("digits", "")
-    
     days_until, next_age = get_birthday_data(dtmf_digits)
-
-    if days_until is None:
-        text = 'Invalid birthday format. Please try again later.'
-    else:
-        text = f"Your birthday is in {days_until} days and you will be {next_age} years old! Goodbye."
-
+    
+    text = f"Your birthday is in {days_until} days and you will be {next_age}!" if days_until else "Invalid format."
     return [Talk(text=text).model_dump()]
 
 @app.post("/events")
@@ -90,17 +81,14 @@ async def events(request: Request):
     return Response(status_code=204)
 
 def get_birthday_data(dtmf_digits: str):
-    if len(dtmf_digits) != 8:
-        return None, None
+    if len(dtmf_digits) != 8: return None, None
     try:
         bday = datetime.strptime(dtmf_digits, "%m%d%Y").date()
         today = date.today()
         next_bday = bday.replace(year=today.year)
-        if next_bday < today:
-            next_bday = next_bday.replace(year=today.year + 1)
+        if next_bday < today: next_bday = next_bday.replace(year=today.year + 1)
         return (next_bday - today).days, next_bday.year - bday.year
-    except:
-        return None, None
+    except: return None, None
 
 if __name__ == "__main__":
     import uvicorn
