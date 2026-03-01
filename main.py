@@ -30,9 +30,10 @@ if os.path.exists(PRIVATE_KEY_PATH):
         PRIVATE_KEY = f.read()
     print(f"✅ Private key loaded from: {PRIVATE_KEY_PATH}")
 else:
+    # خطة احتياطية في حال لم يجد الملف (من المتغير البيئي)
     PRIVATE_KEY = os.getenv("VONAGE_PRIVATE_KEY", "").replace('\\n', '\n').strip()
     if not PRIVATE_KEY:
-        print(f"❌ ERROR: {PRIVATE_KEY_PATH} NOT FOUND!")
+        print(f"❌ ERROR: {PRIVATE_KEY_PATH} NOT FOUND AND NO ENV KEY SET!")
 
 # =========================
 # Initialize Clients
@@ -43,7 +44,7 @@ templates = Jinja2Templates(directory="templates")
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# إعداد المصادقة
+# إعداد المصادقة باستخدام مكتبة Vonage v4
 auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY)
 vonage_client = Vonage(auth)
 gemini = GeminiClient(api_key=GEMINI_API_KEY)
@@ -57,7 +58,9 @@ call_log = []
 # =========================
 
 def clean_phone_number(number: str):
-    """تنظيف الرقم من أي رموز مثل + أو مسافات ليتوافق مع Regex فوناج"""
+    """تنظيف الرقم من أي رموز مثل + ليتوافق مع Regex فوناج v4"""
+    if not number:
+        return ""
     return re.sub(r'\D', '', str(number))
 
 def get_ai_response(session_id: str, text: str):
@@ -65,17 +68,17 @@ def get_ai_response(session_id: str, text: str):
         if session_id not in chat_sessions:
             chat_sessions[session_id] = gemini.chats.create(
                 model="gemini-2.0-flash",
-                config={'system_instruction': 'You are a helpful and very concise phone assistant. Keep answers short.'}
+                config={'system_instruction': 'You are a helpful and concise phone assistant. Speak briefly.'}
             )
         
         response = chat_sessions[session_id].send_message(text)
         return response.text
     except Exception as e:
         print(f"AI ERROR: {e}")
-        return "I am sorry, I am having trouble connecting to my brain. Can you repeat?"
+        return "I'm sorry, I'm having trouble thinking. Can you repeat that?"
 
 def generate_ncco(text: str):
-    """إنشاء كائن التحكم في المكالمة"""
+    """إنشاء كائن التحكم في المكالمة (NCCO)"""
     return [
         {
             "action": "talk",
@@ -89,8 +92,8 @@ def generate_ncco(text: str):
             "type": ["speech"],
             "speech": {
                 "language": "en-US",
-                "endOnSilence": 1.0,
-                "maxDuration": 45
+                "endOnSilence": 1.2,
+                "maxDuration": 60
             },
             "eventUrl": [f"{RENDER_URL}/event"],
             "eventMethod": "POST"
@@ -111,7 +114,7 @@ async def voice_event(req: Request):
     call_uuid = data.get("uuid")
     status = data.get("status")
 
-    # تنظيف الجلسة عند انتهاء المكالمة
+    # تنظيف الذاكرة عند انتهاء المكالمة
     if status in ["completed", "disconnected"]:
         if call_uuid in chat_sessions:
             del chat_sessions[call_uuid]
@@ -123,34 +126,35 @@ async def voice_event(req: Request):
         user_input = speech_results[0].get("text")
         ai_reply = get_ai_response(call_uuid, user_input)
     else:
-        ai_reply = "I'm sorry, I didn't hear you. Are you still there?"
+        ai_reply = "I didn't hear anything. Are you still there?"
 
     return JSONResponse(generate_ncco(ai_reply))
 
 @app.post("/inbound")
 async def inbound(req: Request):
-    """هذه الدالة تستقبل رسالة SMS وتحولها لاتصال هاتف"""
+    """تحويل رسالة SMS تحتوي على كلمة call إلى مكالمة هاتفية"""
     data = await req.json()
     sender = data.get("from")
     text = (data.get("text") or "").lower().strip()
 
     if text == "call" and sender:
-        # تنظيف الأرقام من علامة + (ضروري جداً لتجنب خطأ الـ Regex)
         target_number = clean_phone_number(sender)
         from_number = clean_phone_number(VOICE_FROM_NUMBER)
         
-        ncco_payload = generate_ncco("Hello! This is your Gemini AI assistant. How can I help you?")
+        ncco_payload = generate_ncco("Hello! This is your AI assistant. How can I help you today?")
         
         try:
-            # استخدام التنسيق المتوافق مع Vonage v4
-            vonage_client.voice.create_call({
-                "to": [{"type": "phone", "number": target_number}],
-                "from": {"type": "phone", "number": from_number},
-                "ncco": ncco_payload
-            })
-            call_log.append({"to": target_number, "status": "Initiated"})
-            print(f"✅ Call sent to {target_number}")
+            # التعديل الحاسم: استخدام from_ بالشرطة السفلية لـ Pydantic Validation
+            vonage_client.voice.create_call(
+                to=[{"type": "phone", "number": target_number}],
+                from_={"type": "phone", "number": from_number},
+                ncco=ncco_payload
+            )
+            
+            call_log.append({"to": target_number, "status": "Connected"})
+            print(f"✅ Success! Initiated call to {target_number}")
         except Exception as e:
+            # طباعة الخطأ كاملاً للتشخيص
             print(f"❌ Call Dispatch Error: {e}")
         
     return {"status": "ok"}
