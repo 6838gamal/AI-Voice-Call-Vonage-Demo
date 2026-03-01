@@ -8,3 +8,4 @@ google-genai
 Jinja2
 
 google-generativeai
+python-multipart
