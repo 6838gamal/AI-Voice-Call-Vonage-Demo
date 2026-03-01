@@ -10,7 +10,7 @@ import vonage
 from vonage import Voice
 
 # ======================
-# ENV
+# LOAD ENV
 # ======================
 load_dotenv()
 
@@ -19,11 +19,11 @@ PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
 WHATSAPP_SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
 PORT = int(os.getenv("PORT", 10000))
-RENDER_URL = os.getenv("RENDER_URL")
+RENDER_URL = os.getenv("RENDER_URL")  # e.g. https://ai-voice-call-vonage-demo.onrender.com
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # ======================
-# APP
+# INITIALIZE APP
 # ======================
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -44,12 +44,12 @@ call_log = []
 conversation_log = []
 
 # ======================
-# GEMINI
+# GEMINI AI
 # ======================
 def ask_gemini_safe(prompt):
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
     payload = {
-        "contents": [{"parts": [{"text": f"You are AI assistant in phone call. Reply short and clear. User: {prompt}"}]}]
+        "contents": [{"parts": [{"text": f"You are an AI assistant in a phone call. Reply short and clear. User: {prompt}"}]}]
     }
     try:
         r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload)
@@ -94,12 +94,10 @@ async def make_call(to_number):
     try:
         if not to_number.startswith("+"):
             to_number = "+" + to_number
-        url = f"{RENDER_URL}/answer"
-        print("ANSWER URL:", url)
         voice.create_call({
             "to": [{"type": "phone", "number": to_number}],
             "from": {"type": "phone", "number": VOICE_FROM_NUMBER},
-            "answer_url": [url],
+            "answer_url": [f"{RENDER_URL}/answer"],
         })
         call_log.append({"to": to_number})
         return True
@@ -108,41 +106,39 @@ async def make_call(to_number):
         return False
 
 # ======================
-# /answer NCCO
+# ANSWER NCCO
 # ======================
 @app.get("/answer")
 async def answer():
     ncco = [
         {
             "action": "talk",
-            "text": "Hello. This is your AI assistant. Please speak.",
+            "text": "Hello. This is your AI assistant. Please speak after the beep.",
             "voiceName": "Amy",
             "bargeIn": True
         },
         {
             "action": "input",
             "type": ["speech"],
-            "speech": {
-                "language": "en-US",
-                "endOnSilence": 1,
-                "maxDuration": 60
-            },
+            "speech": {"language": "en-US", "endOnSilence": 1, "maxDuration": 60},
             "eventUrl": [f"{RENDER_URL}/event"]
         }
     ]
     return JSONResponse(ncco)
 
 # ======================
-# /event for Voice Input
+# EVENT HANDLER
 # ======================
 @app.post("/event")
 async def event(req: Request):
-    # تقبل JSON أو form-data
     try:
         data = await req.json()
     except:
-        form = await req.form()
-        data = dict(form)
+        try:
+            form = await req.form()
+            data = dict(form)
+        except:
+            data = {}
 
     print("EVENT RAW:", data)
     speech = ""
@@ -185,14 +181,23 @@ async def event(req: Request):
     ])
 
 # ======================
-# INBOUND WhatsApp
+# INBOUND WHATSAPP
 # ======================
 @app.post("/inbound")
 async def inbound(req: Request):
-    data = await req.json()
+    try:
+        data = await req.json()
+    except:
+        try:
+            form = await req.form()
+            data = dict(form)
+        except:
+            data = {}
+
     sender = data.get("from")
     text = data.get("text") or data.get("message", {}).get("content", {}).get("text", "")
     text = (text or "").lower().strip()
+
     if not sender:
         return JSONResponse({"ok": False})
 
@@ -212,7 +217,7 @@ async def inbound(req: Request):
     return JSONResponse({"ok": True})
 
 # ======================
-# Web UI
+# WEB UI
 # ======================
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -222,7 +227,7 @@ async def index(request: Request):
     )
 
 # ======================
-# Status
+# STATUS
 # ======================
 @app.get("/status")
 async def status():
