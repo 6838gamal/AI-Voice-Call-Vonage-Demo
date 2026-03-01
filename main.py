@@ -7,22 +7,21 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
-# استيراد المكتبات الأساسية
+# استيراد المكتبة الأساسية فقط لضمان أقصى درجات التوافق
 from vonage import Auth, Vonage
 
 load_dotenv()
 
 app = FastAPI()
 
-# إعداد المجلدات (تأكد من وجود مجلدي static و templates في مشروعك)
+# إعداد المجلدات - تأكد من وجود مجلد 'templates' ومجلد 'static' في مشروعك على GitHub
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# إعداد المصادقة - قراءة المفتاح من متغير بيئة نصي (أضمن لـ Render)
-private_key = os.getenv("VONAGE_PRIVATE_KEY")
+# إعداد المصادقة (دعم القراءة من متغير بيئة نصي أو ملف)
 application_id = os.getenv("VONAGE_APPLICATION_ID")
+private_key = os.getenv("VONAGE_PRIVATE_KEY")
 
-# إذا لم يجد نص المفتاح، يحاول القراءة من الملف (للتجربة المحلية)
 if not private_key:
     key_path = os.getenv("VONAGE_PRIVATE_KEY_PATH", "private.key")
     if os.path.exists(key_path):
@@ -34,23 +33,30 @@ vonage_client = Vonage(auth)
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """عرض الصفحة الرئيسية"""
+    """عرض صفحة طلب المكالمة"""
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/dial")
 async def dial(request: Request):
-    """بدء عملية الاتصال"""
+    """بدء المكالمة الصادرة"""
     form_data = await request.form()
-    raw_number = form_data.get("phone")
+    to_number_raw = form_data.get("phone")
     
-    if not raw_number:
-        return templates.TemplateResponse("index.html", {"request": request, "message": "Please enter a phone number."})
+    if not to_number_raw:
+        return templates.TemplateResponse("index.html", {"request": request, "message": "Please enter a destination number."})
 
-    # تنظيف الرقم: إبقاء الأرقام فقط (يزيل +، المسافات، الأقواس)
-    clean_to = re.sub(r'\D', '', raw_number)
-    clean_from = re.sub(r'\D', '', os.getenv("VONAGE_FROM_NUMBER", "1234567890"))
+    # 1. تنظيف رقم المستلم (To)
+    clean_to = re.sub(r'\D', '', to_number_raw)
 
-    # بناء الـ NCCO كقواميس (أكثر استقراراً مع تحديثات المكتبة)
+    # 2. تحديد رقم المرسل (From) 
+    # الأولوية لمتغير البيئة، وإذا لم يوجد نستخدم الرقم الافتراضي الذي طلبته
+    from_env = os.getenv("VONAGE_FROM_NUMBER")
+    if not from_env or from_env.strip() == "":
+        from_env = "967774440982"
+    
+    clean_from = re.sub(r'\D', '', from_env)
+
+    # 3. بناء الـ NCCO كـ List of Dictionaries (أكثر استقراراً)
     ncco = [
         {
             "action": "talk",
@@ -66,7 +72,7 @@ async def dial(request: Request):
         }
     ]
 
-    # طلب المكالمة الصادرة
+    # 4. تجهيز حمولة الطلب (Payload)
     call_payload = {
         "to": [{"type": "phone", "number": clean_to}],
         "from": {"type": "phone", "number": clean_from},
@@ -75,58 +81,55 @@ async def dial(request: Request):
     }
 
     try:
+        # إرسال طلب المكالمة
         response = vonage_client.voice.create_call(call_payload)
         return templates.TemplateResponse("index.html", {
             "request": request, 
-            "message": f"Success! Call initiated to {clean_to}. Check your phone!"
+            "message": f"Success! Call initiated from {clean_from} to {clean_to}."
         })
     except Exception as e:
-        print(f"Error calling: {e}")
+        print(f"Deployment Error: {e}")
         return templates.TemplateResponse("index.html", {
             "request": request, 
-            "message": f"Connection Error: {str(e)}"
+            "message": f"Error: {str(e)}"
         })
 
 @app.post("/birthday")
 async def birthday(request: Request):
-    """معالجة مدخلات المستخدم أثناء المكالمة"""
+    """معالجة رقم الـ DTMF الذي أدخله المستخدم"""
     data = await request.json()
     dtmf_digits = data.get("dtmf", {}).get("digits", "")
     
     days_until, next_age = get_birthday_data(dtmf_digits)
 
     if days_until is None:
-        text = "Sorry, I couldn't understand that date. Goodbye."
+        text = "Sorry, the date format is incorrect. Goodbye."
     else:
-        text = f"Your birthday is in {days_until} days, and you will be {next_age} years old! Thank you for using our AI service. Goodbye."
+        text = f"Your birthday is in {days_until} days, and you will be {next_age} years old! Goodbye."
 
     return [{"action": "talk", "text": text}]
 
 @app.post("/events")
 async def events(request: Request):
-    """استقبال تحديثات حالة المكالمة"""
+    """مسار لمراقبة أحداث المكالمة (ضروري لـ Vonage)"""
     return Response(status_code=204)
 
 def get_birthday_data(dtmf_digits: str):
-    """منطق حساب الأيام المتبقية للعيد ميلاد"""
+    """حساب فرق الأيام والعمر القادم"""
     if len(dtmf_digits) != 8:
         return None, None
     try:
-        # التنسيق: MMDDYYYY
+        # التنسيق المتوقع MMDDYYYY
         bday = datetime.strptime(dtmf_digits, "%m%d%Y").date()
         today = date.today()
         next_bday = bday.replace(year=today.year)
         if next_bday < today:
             next_bday = next_bday.replace(year=today.year + 1)
-
-        days_until = (next_bday - today).days
-        next_age = next_bday.year - bday.year
-        return days_until, next_age
-    except Exception:
+        return (next_bday - today).days, next_bday.year - bday.year
+    except:
         return None, None
 
 if __name__ == "__main__":
     import uvicorn
-    # Render يمرر المنفذ عبر متغير PORT
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
