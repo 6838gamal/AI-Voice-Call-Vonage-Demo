@@ -17,7 +17,9 @@ load_dotenv()
 
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
 # تأكد أن المفتاح الخاص يبدأ بـ -----BEGIN PRIVATE KEY-----
-PRIVATE_KEY = os.getenv("VONAGE_PRIVATE_KEY", "").replace('\\n', '\n') 
+#PRIVATE_KEY = os.getenv("VONAGE_PRIVATE_KEY", "").replace('\\n', '\n') 
+PRIVATE_KEY = os.getenv("VONAGE_PRIVATE_KEY")
+
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
 RENDER_URL = os.getenv("RENDER_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
