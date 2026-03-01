@@ -1,124 +1,107 @@
 import os
-import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from datetime import datetime, date
+from typing import Optional
+
+from fastapi import FastAPI, Request, Response
 from dotenv import load_dotenv
+from vonage import Vonage, Auth, HttpClientOptions
+from vonage_messages import WhatsappText
+from vonage_voice import CreateCallRequest, Talk, Input, Dtmf
 
-# التحديث ليتوافق مع Vonage v4.0+
-from vonage import Vonage
-from vonage_utils import Auth
-from vonage_voice import CreateCallRequest
-from google.genai import Client as GeminiClient
-
-# =========================
-# Configuration & ENV
-# =========================
+# تحميل متغيرات البيئة
 load_dotenv()
 
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
-# نصيحة: ضع محتوى ملف الـ .key في متغير بيئي اسمه VONAGE_PRIVATE_KEY
-PRIVATE_KEY = os.getenv("VONAGE_PRIVATE_KEY", "").replace('\\n', '\n') 
+PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
+WHATSAPP_SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
-RENDER_URL = os.getenv("RENDER_URL")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-PORT = int(os.getenv("PORT", 10000))
+TO_NUMBER = os.getenv("TO_NUMBER")
+BASE_URL = os.getenv("BASE_URL")
 
-# =========================
-# Initialize Clients
-# =========================
+# إعداد FastAPI
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
 
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+# إعداد المصادقة
+auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
+options = HttpClientOptions(api_host="messages-sandbox.nexmo.com")
 
-# إعداد المصادقة باستخدام النص مباشرة أو المسار
-auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY)
-vonage_client = Vonage(auth)
-gemini = GeminiClient(api_key=GEMINI_API_KEY)
+@app.get("/dial")
+async def dial():
+    talk = Talk(
+        text='Hello! Please enter your birthday as two-digit month, two-digit day, and four-digit year, and then press pound.',
+        loop=1,
+        language='en-US'
+    )
+    # ملاحظة: FastAPI يتعامل مع المسارات ببساطة
+    dtmf_input = Input(
+        type=['dtmf'],
+        dtmf=Dtmf(timeOut=10, maxDigits=8, submitOnHash=True),
+        eventUrl=[f"{BASE_URL}/birthday"],
+        eventMethod='POST'
+    )
+    ncco = [talk.model_dump(), dtmf_input.model_dump()]
 
-# مخزن الجلسات (سياق المحادثة)
-chat_sessions = {}
-call_log = []
+    call = CreateCallRequest(
+        to=[{'type': 'phone', 'number': TO_NUMBER}],
+        from_={'type': 'phone', 'number': VOICE_FROM_NUMBER},
+        ncco=ncco,
+        machine_detection='hangup'
+    )
 
-# =========================
-# AI & NCCO Logic
-# =========================
-def get_ai_response(session_id: str, text: str):
-    try:
-        if session_id not in chat_sessions:
-            chat_sessions[session_id] = gemini.chats.create(model="gemini-2.0-flash")
-        
-        response = chat_sessions[session_id].send_message(text)
-        return response.text
-    except Exception as e:
-        print(f"AI ERROR: {e}")
-        return "I'm sorry, I'm having trouble thinking. Can you repeat that?"
+    vonage_client = Vonage(auth)
+    response = vonage_client.voice.create_call(call)
+    return response.model_dump()
 
-def generate_ncco(text: str):
-    return [
-        {
-            "action": "talk",
-            "text": text,
-            "language": "en-US",
-            "bargeIn": True
-        },
-        {
-            "action": "input",
-            "type": ["speech"],
-            "speech": {
-                "language": "en-US",
-                "endOnSilence": 1.5,
-                "maxDuration": 60
-            },
-            "eventUrl": [f"{RENDER_URL}/event"],
-            "eventMethod": "POST"
-        }
-    ]
-
-# =========================
-# Routes
-# =========================
-
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
-
-@app.post("/event")
-async def voice_event(req: Request):
-    data = await req.json()
-    speech_results = data.get("speech", {}).get("results", [])
-    call_uuid = data.get("uuid")
-
-    if speech_results:
-        user_input = speech_results[0].get("text")
-        ai_reply = get_ai_response(call_uuid, user_input)
-    else:
-        ai_reply = "I didn't hear anything. Are you still there?"
-
-    return JSONResponse(generate_ncco(ai_reply))
-
-@app.post("/inbound")
-async def inbound(req: Request):
-    data = await req.json()
-    sender = data.get("from")
-    text = (data.get("text") or "").lower().strip()
-
-    if text == "call" and sender:
-        to_num = sender if sender.startswith("+") else f"+{sender}"
-        ncco = generate_ncco("Hello! This is your AI assistant. How can I help you?")
-        
-        call_req = CreateCallRequest(
-            to=[{"type": "phone", "number": to_num}],
-            from_={"type": "phone", "number": VOICE_FROM_NUMBER},
-            ncco=ncco
+@app.post("/events")
+async def events(request: Request):
+    data = await request.get_json()
+    status = data.get("status")
+    to = data.get("to")
+    
+    if status == "machine":
+        message = WhatsappText(
+            from_=WHATSAPP_SANDBOX_NUMBER,
+            to=to,
+            text='Want to know how many days left until your birthday? call us back!'
         )
-        vonage_client.voice.create_call(call_req)
-        call_log.append({"to": to_num, "status": "Connected"})
+        vonage_client = Vonage(auth, options)
+        vonage_client.messages.send(message)
+    
+    return Response(status_code=204)
+
+@app.post("/birthday")
+async def birthday(request: Request):
+    data = await request.get_json()
+    dtmf_digits = data.get("dtmf", {}).get("digits", "")
+    
+    days_until, next_age = get_birthday_data(dtmf_digits)
+
+    if days_until is None:
+        text = 'Invalid birthday format. Try again.'
+    else:
+        text = f"Your birthday is in {days_until} days and you will be {next_age} years old! Thank you!"
+
+    talk = Talk(text=text, loop=1, language='en-US')
+    return [talk.model_dump()]
+
+def get_birthday_data(dtmf_digits: str):
+    if len(dtmf_digits) != 8:
+        return None, None
+    try:
+        bday = datetime.strptime(dtmf_digits, "%m%d%Y").date()
+        today = date.today()
         
-    return {"status": "ok"}
+        next_bday = bday.replace(year=today.year)
+        if next_bday < today:
+            next_bday = next_bday.replace(year=today.year + 1)
+
+        days_until = (next_bday - today).days
+        next_age = next_bday.year - bday.year
+        return days_until, next_age
+    except ValueError:
+        return None, None
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    import uvicorn
+    port = int(os.getenv("PORT", 3000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
