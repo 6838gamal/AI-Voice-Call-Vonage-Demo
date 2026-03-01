@@ -13,6 +13,7 @@ load_dotenv()
 app = FastAPI()
 
 # إعداد المجلدات
+# تأكد من وجود مجلد templates ومجلد static في الـ GitHub الخاص بك
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -44,13 +45,14 @@ async def dial(request: Request):
     # تنظيف رقم المستلم
     clean_to = re.sub(r'\D', '', to_number_raw)
 
-    # --- إصلاح الخطأ السابق هنا ---
+    # --- الإصلاح الجذري للخطأ ---
     from_env = os.getenv("VONAGE_FROM_NUMBER")
-    if not from_env or from_env.strip() == "":
-        from_env = "967774440982" # الرقم الافتراضي في حال عدم التعيين
+    # إذا كان المتغير فارغاً في Render، سيستخدم هذا الرقم تلقائياً
+    if not from_env or len(from_env.strip()) < 5:
+        from_env = "967774440982"
     
     clean_from = re.sub(r'\D', '', from_env)
-    # -----------------------------
+    # ---------------------------
 
     ncco = [
         {
@@ -67,6 +69,7 @@ async def dial(request: Request):
         }
     ]
 
+    # ملاحظة: نستخدم "from" كمفتاح في القاموس
     call_payload = {
         "to": [{"type": "phone", "number": clean_to}],
         "from": {"type": "phone", "number": clean_from},
@@ -78,13 +81,14 @@ async def dial(request: Request):
         response = vonage_client.voice.create_call(call_payload)
         return templates.TemplateResponse("index.html", {
             "request": request, 
-            "message": f"Success! Call initiated from {clean_from} to {clean_to}."
+            "message": f"Success! Calling {clean_to} from {clean_from}..."
         })
     except Exception as e:
-        print(f"Error: {e}")
+        # طباعة الخطأ في السجلات للتصحيح
+        print(f"Detailed Error: {str(e)}")
         return templates.TemplateResponse("index.html", {
             "request": request, 
-            "message": f"Connection Error: {str(e)}"
+            "message": f"Error: {str(e)}"
         })
 
 @app.post("/birthday")
@@ -92,7 +96,12 @@ async def birthday(request: Request):
     data = await request.json()
     dtmf_digits = data.get("dtmf", {}).get("digits", "")
     days_until, next_age = get_birthday_data(dtmf_digits)
-    text = f"Your birthday is in {days_until} days, and you will be {next_age} years old! Goodbye." if days_until else "Invalid format."
+    
+    if days_until is not None:
+        text = f"Your birthday is in {days_until} days, and you will be {next_age} years old! Goodbye."
+    else:
+        text = "Sorry, the date format was not recognized. Goodbye."
+        
     return [{"action": "talk", "text": text}]
 
 @app.post("/events")
@@ -111,4 +120,5 @@ def get_birthday_data(dtmf_digits: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
