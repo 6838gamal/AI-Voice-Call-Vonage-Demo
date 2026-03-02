@@ -1,16 +1,16 @@
 import os
-import uvicorn
 import re
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, HTMLResponse
+import json
+import requests
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
-# استيراد الأدوات اللازمة من Vonage v4
+# Vonage
 from vonage import Vonage, Auth
 from vonage_voice import CreateCallRequest
-from google.genai import Client as GeminiClient
 
 # =========================
 # Configuration & ENV
@@ -23,7 +23,6 @@ RENDER_URL = os.getenv("RENDER_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 PORT = int(os.getenv("PORT", 10000))
 
-# قراءة المفتاح الخاص من ملف
 PRIVATE_KEY_PATH = "private.key"
 if os.path.exists(PRIVATE_KEY_PATH):
     with open(PRIVATE_KEY_PATH, "r") as f:
@@ -42,7 +41,6 @@ if os.path.exists("static"):
 
 auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY)
 vonage_client = Vonage(auth)
-gemini = GeminiClient(api_key=GEMINI_API_KEY)
 
 chat_sessions = {}
 call_log = []
@@ -54,20 +52,30 @@ call_log = []
 def clean_num(number: str):
     return re.sub(r'\D', '', str(number))
 
-def get_ai_response(session_id: str, text: str):
+def ask_gemini(text: str, session_id: str):
+    """استدعاء Gemini REST API لكل جلسة."""
+    if session_id not in chat_sessions:
+        chat_sessions[session_id] = []
+
+    chat_history = chat_sessions[session_id]
+    full_prompt = "\n".join(chat_history + [f"You: {text}"])
+    data = {"contents":[{"parts":[{"text": full_prompt}]}]}
+    GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
     try:
-        if session_id not in chat_sessions:
-            chat_sessions[session_id] = gemini.chats.create(
-                model="gemini-2.0-flash",
-                config={'system_instruction': 'You are a concise AI phone assistant.'}
-            )
-        response = chat_sessions[session_id].send_message(text)
-        return response.text
+        r = requests.post(GEMINI_URL, headers={"Content-Type":"application/json"}, data=json.dumps(data))
+        res = r.json()
+        reply = res["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        print(f"AI ERROR: {e}")
-        return "Sorry, I am having trouble. Can you repeat?"
+        reply = f"Error: {e}"
+    
+    chat_history.append(f"You: {text}")
+    chat_history.append(f"Gemini: {reply}")
+    chat_sessions[session_id] = chat_history
+    return reply
 
 def generate_ncco(text: str):
+    """إنشاء NCCO مع talk وinput"""
     return [
         {
             "action": "talk",
@@ -90,8 +98,58 @@ def generate_ncco(text: str):
 # Routes
 # =========================
 
+INDEX_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Voice Call</title>
+<style>
+body { font-family: Arial; max-width: 600px; margin: 40px auto; }
+input, button { padding: 10px; font-size: 16px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<h2>أدخل رقم الهاتف للاتصال بالـ AI Assistant</h2>
+<form method="POST" action="/call">
+<input type="text" name="phone" placeholder="مثال: 9677XXXXXXX" required>
+<br>
+<button type="submit">اتصل</button>
+</form>
+
+<h3>سجل المكالمات</h3>
+<ul>
+{% for c in calls %}
+<li>{{c.to}} - {{c.status}}</li>
+{% endfor %}
+</ul>
+</body>
+</html>
+"""
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
+
+@app.post("/call")
+async def call(request: Request, phone: str = Form(...)):
+    to_num = clean_num(phone)
+    from_num = clean_num(VOICE_FROM_NUMBER)
+    
+    try:
+        call_params = CreateCallRequest(
+            to=[{"type": "phone", "number": to_num}],
+            from_={"type": "phone", "number": from_num},
+            ncco=generate_ncco("Hello! This is your AI assistant.")
+        )
+        vonage_client.voice.create_call(call_params)
+        call_log.append({"to": to_num, "status": "Initiated"})
+        print(f"✅ Calling {to_num}")
+    except Exception as e:
+        call_log.append({"to": to_num, "status": f"Error: {e}"})
+        print(f"❌ Error calling {to_num}: {e}")
+    
     return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
 
 @app.post("/event")
@@ -105,37 +163,13 @@ async def voice_event(req: Request):
         return JSONResponse({"status": "ok"})
 
     speech_results = data.get("speech", {}).get("results", [])
-    ai_reply = get_ai_response(call_uuid, speech_results[0].get("text")) if speech_results else "Are you there?"
+    ai_reply = ask_gemini(speech_results[0].get("text") if speech_results else "Are you there?", call_uuid)
     
     return JSONResponse(generate_ncco(ai_reply))
 
-@app.post("/inbound")
-async def inbound(req: Request):
-    data = await req.json()
-    sender = data.get("from")
-    text = (data.get("text") or "").lower().strip()
-
-    if text == "call" and sender:
-        to_num = clean_num(sender)
-        from_num = clean_num(VOICE_FROM_NUMBER)
-        
-        # الحل النهائي: استخدام CreateCallRequest بشكل رسمي
-        try:
-            call_params = CreateCallRequest(
-                to=[{"type": "phone", "number": to_num}],
-                from_={"type": "phone", "number": from_num},
-                ncco=generate_ncco("Hello! This is your AI assistant.")
-            )
-            
-            # تمرير الكائن كـ params كما تطلب المكتبة في اللوج
-            vonage_client.voice.create_call(call_params)
-            
-            call_log.append({"to": to_num, "status": "Initiated"})
-            print(f"✅ Success: Calling {to_num}")
-        except Exception as e:
-            print(f"❌ Final Error: {e}")
-        
-    return {"status": "ok"}
-
+# =========================
+# Main
+# =========================
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=PORT)
