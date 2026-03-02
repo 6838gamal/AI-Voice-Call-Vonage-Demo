@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
+# Vonage
 from vonage import Vonage, Auth
 from vonage_voice import CreateCallRequest
 
@@ -116,6 +117,31 @@ async def call(request: Request, phone: str = Form(...)):
         print(f"❌ Error calling {to_num}: {e}")
     
     return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
+
+@app.post("/inbound")
+async def inbound(req: Request):
+    """التعامل مع رسائل Vonage الواردة (SMS/WhatsApp)"""
+    data = await req.json()
+    sender = data.get("from")
+    text = (data.get("text") or "").lower().strip()
+
+    if text == "call" and sender:
+        to_num = clean_num(sender)
+        from_num = clean_num(VOICE_FROM_NUMBER)
+        try:
+            call_params = CreateCallRequest(
+                to=[{"type": "phone", "number": to_num}],
+                from_={"type": "phone", "number": from_num},
+                ncco=generate_ncco("Hello! This is your AI assistant.")
+            )
+            vonage_client.voice.create_call(call_params)
+            call_log.append({"to": to_num, "status": "Initiated"})
+            print(f"✅ Inbound: Calling {to_num}")
+        except Exception as e:
+            call_log.append({"to": to_num, "status": f"Error: {e}"})
+            print(f"❌ Inbound Error: {e}")
+
+    return {"status": "ok"}
 
 @app.post("/event")
 async def voice_event(req: Request):
