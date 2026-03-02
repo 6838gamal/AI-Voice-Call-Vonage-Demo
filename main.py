@@ -8,7 +8,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
-# Vonage
 from vonage import Vonage, Auth
 from vonage_voice import CreateCallRequest
 
@@ -120,7 +119,7 @@ async def call(request: Request, phone: str = Form(...)):
 
 @app.post("/inbound")
 async def inbound(req: Request):
-    """التعامل مع رسائل Vonage الواردة (SMS/WhatsApp)"""
+    """التعامل مع رسائل Vonage الواردة"""
     data = await req.json()
     sender = data.get("from")
     text = (data.get("text") or "").lower().strip()

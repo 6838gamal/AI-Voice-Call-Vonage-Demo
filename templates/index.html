@@ -1,24 +1,51 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI WhatsApp & Voice</title>
-  <link rel="stylesheet" href="/static/css/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Voice Call</title>
+<style>
+body { font-family: Arial; max-width: 600px; margin: 40px auto; }
+input, button { padding: 10px; font-size: 16px; margin-top: 10px; width: 100%; }
+h2 { text-align: center; }
+#log { margin-top: 20px; }
+#log li { margin-bottom: 5px; }
+</style>
 </head>
 <body>
-  <h2>AI WhatsApp & Voice</h2>
+<h2>إجراء مكالمة AI</h2>
 
-  <label>رقم واتساب (مثال: +96777xxxxxxx)</label>
-  <input type="text" id="phone" placeholder="Enter phone number">
+<label>رقم الهاتف (مثال: +96777XXXXXXX)</label>
+<input type="text" id="phone" placeholder="أدخل الرقم هنا">
 
-  <label>نص الرسالة أو اكتب 'call' لإجراء مكالمة</label>
-  <textarea id="message" placeholder="Enter your message"></textarea>
+<button id="callBtn">ابدأ المكالمة</button>
 
-  <button id="sendBtn">إرسال</button>
+<h3>سجل المكالمات</h3>
+<ul id="log">
+{% for c in calls %}
+<li>{{c.to}} - {{c.status}}</li>
+{% endfor %}
+</ul>
 
-  <div id="response"></div>
+<script>
+document.getElementById("callBtn").onclick = async function() {
+    const phone = document.getElementById("phone").value.trim();
+    if(!phone){
+        alert("أدخل رقم الهاتف أولاً!");
+        return;
+    }
 
-  <script src="/static/js/script.js"></script>
+    const formData = new FormData();
+    formData.append("phone", phone);
+
+    const res = await fetch("/call", { method: "POST", body: formData });
+    if(res.ok){
+        alert("تم بدء المكالمة ✅");
+        location.reload();  // لتحديث سجل المكالمات
+    } else {
+        alert("حدث خطأ أثناء محاولة إجراء المكالمة ❌");
+    }
+};
+</script>
 </body>
 </html>
