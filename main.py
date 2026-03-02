@@ -8,7 +8,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
-# Vonage
 from vonage import Vonage, Auth
 from vonage_voice import CreateCallRequest
 
@@ -48,12 +47,10 @@ call_log = []
 # =========================
 # Helpers
 # =========================
-
 def clean_num(number: str):
     return re.sub(r'\D', '', str(number))
 
 def ask_gemini(text: str, session_id: str):
-    """استدعاء Gemini REST API لكل جلسة."""
     if session_id not in chat_sessions:
         chat_sessions[session_id] = []
 
@@ -75,7 +72,6 @@ def ask_gemini(text: str, session_id: str):
     return reply
 
 def generate_ncco(text: str):
-    """إنشاء NCCO مع talk وinput"""
     return [
         {
             "action": "talk",
@@ -97,37 +93,6 @@ def generate_ncco(text: str):
 # =========================
 # Routes
 # =========================
-
-INDEX_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Voice Call</title>
-<style>
-body { font-family: Arial; max-width: 600px; margin: 40px auto; }
-input, button { padding: 10px; font-size: 16px; margin-top: 10px; }
-</style>
-</head>
-<body>
-<h2>أدخل رقم الهاتف للاتصال بالـ AI Assistant</h2>
-<form method="POST" action="/call">
-<input type="text" name="phone" placeholder="مثال: 9677XXXXXXX" required>
-<br>
-<button type="submit">اتصل</button>
-</form>
-
-<h3>سجل المكالمات</h3>
-<ul>
-{% for c in calls %}
-<li>{{c.to}} - {{c.status}}</li>
-{% endfor %}
-</ul>
-</body>
-</html>
-"""
-
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
