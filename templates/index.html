@@ -1,51 +1,38 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Voice Call</title>
-<style>
-body { font-family: Arial; max-width: 600px; margin: 40px auto; }
-input, button { padding: 10px; font-size: 16px; margin-top: 10px; width: 100%; }
-h2 { text-align: center; }
-#log { margin-top: 20px; }
-#log li { margin-bottom: 5px; }
-</style>
+<title>AI Voice & WhatsApp</title>
+<link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-<h2>إجراء مكالمة AI</h2>
 
-<label>رقم الهاتف (مثال: +96777XXXXXXX)</label>
-<input type="text" id="phone" placeholder="أدخل الرقم هنا">
+<div class="container">
+  <h1>تطبيق المكالمات والرسائل AI</h1>
 
-<button id="callBtn">ابدأ المكالمة</button>
+  <section class="card">
+    <h2>إجراء مكالمة AI</h2>
+    <input type="text" id="phone" placeholder="أدخل رقم الهاتف +96777XXXXXXX">
+    <button id="callBtn">ابدأ المكالمة</button>
 
-<h3>سجل المكالمات</h3>
-<ul id="log">
-{% for c in calls %}
-<li>{{c.to}} - {{c.status}}</li>
-{% endfor %}
-</ul>
+    <h3>سجل المكالمات</h3>
+    <ul id="log">
+      {% for c in calls %}
+      <li>{{c.to}} - {{c.status}}</li>
+      {% endfor %}
+    </ul>
+  </section>
 
-<script>
-document.getElementById("callBtn").onclick = async function() {
-    const phone = document.getElementById("phone").value.trim();
-    if(!phone){
-        alert("أدخل رقم الهاتف أولاً!");
-        return;
-    }
+  <section class="card">
+    <h2>إرسال رسالة واتساب</h2>
+    <input type="text" id="phoneMsg" placeholder="رقم واتساب +96777XXXXXXX">
+    <textarea id="message" placeholder="اكتب رسالتك هنا"></textarea>
+    <button id="sendBtn">إرسال</button>
+    <div id="response"></div>
+  </section>
+</div>
 
-    const formData = new FormData();
-    formData.append("phone", phone);
-
-    const res = await fetch("/call", { method: "POST", body: formData });
-    if(res.ok){
-        alert("تم بدء المكالمة ✅");
-        location.reload();  // لتحديث سجل المكالمات
-    } else {
-        alert("حدث خطأ أثناء محاولة إجراء المكالمة ❌");
-    }
-};
-</script>
+<script src="/static/js/script.js"></script>
 </body>
 </html>
