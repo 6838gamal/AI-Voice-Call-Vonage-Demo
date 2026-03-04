@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from vonage import Vonage, Auth
-from vonage_voice import CreateCallRequest
+from vonage_voice import Phone, CreateCallRequest
 
 # =========================
 # Load environment
@@ -37,9 +37,11 @@ templates = Jinja2Templates(directory="templates")
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Vonage Voice client
 voice_auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY)
 vonage_voice = Vonage(voice_auth)
 
+# Vonage Messages client for WhatsApp
 msg_auth = Auth(api_key=VONAGE_API_KEY, api_secret=VONAGE_API_SECRET)
 vonage_msg = Vonage(msg_auth)
 
@@ -98,41 +100,28 @@ async def make_call(request: Request, phone: str = Form(...)):
     to_num = clean_number(phone)
     from_num = clean_number(VOICE_FROM_NUMBER)
     try:
-        call = CreateCallRequest(
-            to=[{"type": "phone", "number": to_num}],
-            from_=[{"type": "phone", "number": from_num}],
-            answer_url=[f"{BASE_URL}/answer"],
-            answer_method="GET"
+        # ✅ Correct usage of Phone objects
+        call_request = CreateCallRequest(
+            to=Phone(number=to_num),
+            from_=Phone(number=from_num),
+            ncco=generate_ncco("Hello! This is your AI assistant.")
         )
-        response = vonage_voice.voice.create_call(call)
-        # Fix UUID access
-        call_uuid = getattr(response, "uuid", None) or getattr(response, "call_uuid", None)
-        if call_uuid:
-            call_log[call_uuid] = {"to": to_num, "status": "initiated"}
-        else:
-            call_log[to_num] = {"to": to_num, "status": "Call sent, UUID unknown"}
-        print("Call initiated:", call_uuid or to_num)
+        response = vonage_voice.voice.create_call(call_request)
+        call_uuid = getattr(response, "uuid", None) or getattr(response, "call_uuid", None) or to_num
+        call_log[call_uuid] = {"to": to_num, "status": "initiated"}
+        print("Call initiated:", call_uuid)
     except Exception as e:
         call_log[to_num] = {"to": to_num, "status": f"Error: {e}"}
         print("Call Error:", e)
     return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
 
-@app.get("/answer")
-async def answer():
-    return JSONResponse(generate_ncco("Hello! This is your AI assistant."))
-
 @app.post("/event")
 async def voice_event(request: Request):
-    try:
-        data = await request.json()
-    except:
-        form = await request.form()
-        data = dict(form)
-
+    data = await request.json()
     call_uuid = data.get("uuid")
     status = data.get("status")
-    duration = data.get("duration", 0)
     to_number = data.get("to") or WHATSAPP_FROM
+    duration = data.get("duration", 0)
 
     # ===== Successful call =====
     if status in ["completed", "disconnected"]:
