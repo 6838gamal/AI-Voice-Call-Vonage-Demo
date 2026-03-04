@@ -100,7 +100,7 @@ async def make_call(request: Request, phone: str = Form(...)):
     try:
         call = CreateCallRequest(
             to=[{"type": "phone", "number": to_num}],
-            from_={"type": "phone", "number": from_num}],
+            from_=[{"type": "phone", "number": from_num}],
             answer_url=[f"{BASE_URL}/answer"],
             answer_method="GET"
         )
