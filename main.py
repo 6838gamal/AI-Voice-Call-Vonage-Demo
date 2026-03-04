@@ -99,9 +99,12 @@ async def index(request: Request):
 async def make_call(request: Request, phone: str = Form(...)):
     to_num = clean_number(phone)
     try:
+        # إشعار بأنك طلبت مكالمة
+        send_whatsapp_report(f"📞 Call requested to {to_num}", WHATSAPP_FROM)
+
         call_request = CreateCallRequest(
-            to=[{"type": "phone", "number": to_num}],  # ✅ dict بالشكل الصحيح
-            from_={"type": "phone", "number": VOICE_FROM_NUMBER},  # ✅ dict وليس string
+            to=[{"type": "phone", "number": to_num}],
+            from_={"type": "phone", "number": VOICE_FROM_NUMBER},
             ncco=generate_ncco("Hello! This is your AI assistant.")
         )
         response = vonage_voice.voice.create_call(call_request)
@@ -110,6 +113,7 @@ async def make_call(request: Request, phone: str = Form(...)):
         print("Call initiated:", call_uuid)
     except Exception as e:
         call_log[to_num] = {"to": to_num, "status": f"Error: {e}"}
+        send_whatsapp_report(f"❌ Call Error: {e}", WHATSAPP_FROM)
         print("Call Error:", e)
     return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
 
@@ -139,15 +143,21 @@ Call ID: {call_uuid}
         return JSONResponse({"status": "ok"})
 
     # ===== No answer / timeout =====
-    if status in ["no-answer", "timeout"]:
+    elif status in ["no-answer", "timeout"]:
         report = f"⚠️ Call Not Answered\nStatus: {status}\nCall ID: {call_uuid}"
         send_whatsapp_report(report, to_number)
         return JSONResponse({"status": "ok"})
 
-    # ===== Failed call =====
-    if status in ["failed", "busy", "rejected", "network-error"]:
+    # ===== Failed / rejected / busy / network error =====
+    elif status in ["failed", "busy", "rejected", "network-error"]:
         reason = data.get("reason", "Unknown")
         report = f"❌ Call Failed\nStatus: {status}\nReason: {reason}\nCall ID: {call_uuid}"
+        send_whatsapp_report(report, to_number)
+        return JSONResponse({"status": "ok"})
+
+    # ===== أي حالة غير متوقعة =====
+    else:
+        report = f"⚠️ Call ended with unknown status: {status}\nCall ID: {call_uuid}"
         send_whatsapp_report(report, to_number)
         return JSONResponse({"status": "ok"})
 
