@@ -17,8 +17,8 @@ load_dotenv()
 
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
 PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
-VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")  # string فقط
-WHATSAPP_FROM = os.getenv("VONAGE_SANDBOX_NUMBER")
+VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")  # رقم Vonage أو Sandbox
+WHATSAPP_FROM = os.getenv("VONAGE_SANDBOX_NUMBER")  # نفس الرقم للواتساب
 VONAGE_API_KEY = os.getenv("VONAGE_API_KEY")
 VONAGE_API_SECRET = os.getenv("VONAGE_API_SECRET")
 BASE_URL = os.getenv("BASE_URL")
@@ -101,7 +101,7 @@ async def make_call(request: Request, phone: str = Form(...)):
     try:
         call_request = CreateCallRequest(
             to=[{"type": "phone", "number": to_num}],  # ✅ dict بالشكل الصحيح
-            from_=VOICE_FROM_NUMBER,                    # ✅ string فقط
+            from_={"type": "phone", "number": VOICE_FROM_NUMBER},  # ✅ dict وليس string
             ncco=generate_ncco("Hello! This is your AI assistant.")
         )
         response = vonage_voice.voice.create_call(call_request)
