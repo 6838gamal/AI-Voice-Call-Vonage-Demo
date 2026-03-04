@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from vonage import Vonage, Auth
-from vonage_voice import Phone, CreateCallRequest
+from vonage_voice import CreateCallRequest, Phone, Talk
 
 # =========================
 # Load environment
@@ -55,7 +55,7 @@ def clean_number(number: str):
     return re.sub(r"\D", "", str(number))
 
 def ask_gemini(text: str, session_id: str):
-    history = chat_sessions.get(session_id, [])[-6:]
+    history = chat_sessions.get(session_id, [])[-6:]  # آخر 6 رسائل
     full_prompt = "\n".join(history + [f"User: {text}"])
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     payload = {"contents": [{"parts": [{"text": full_prompt}]}]}
@@ -100,14 +100,13 @@ async def make_call(request: Request, phone: str = Form(...)):
     to_num = clean_number(phone)
     from_num = clean_number(VOICE_FROM_NUMBER)
     try:
-        # ✅ Correct usage of Phone objects
         call_request = CreateCallRequest(
-            to=Phone(number=to_num),
-            from_=Phone(number=from_num),
+            to=[Phone(number=to_num)],          # ✅ Phone object
+            from_=[Phone(number=from_num)],     # ✅ Phone object
             ncco=generate_ncco("Hello! This is your AI assistant.")
         )
         response = vonage_voice.voice.create_call(call_request)
-        call_uuid = getattr(response, "uuid", None) or getattr(response, "call_uuid", None) or to_num
+        call_uuid = getattr(response, "uuid", None) or to_num
         call_log[call_uuid] = {"to": to_num, "status": "initiated"}
         print("Call initiated:", call_uuid)
     except Exception as e:
