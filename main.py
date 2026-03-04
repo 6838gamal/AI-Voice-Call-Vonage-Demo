@@ -4,71 +4,73 @@ import json
 import requests
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
-
 from vonage import Vonage, Auth
 from vonage_voice import CreateCallRequest
 
 # =========================
-# Configuration & ENV
+# Load Environment
 # =========================
 load_dotenv()
 
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
+PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
+
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
-RENDER_URL = os.getenv("RENDER_URL")
+WHATSAPP_FROM = os.getenv("VONAGE_SANDBOX_NUMBER")
+
+VONAGE_API_KEY = os.getenv("VONAGE_API_KEY")
+VONAGE_API_SECRET = os.getenv("VONAGE_API_SECRET")
+
+BASE_URL = os.getenv("BASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 PORT = int(os.getenv("PORT", 10000))
 
-PRIVATE_KEY_PATH = "private.key"
-if os.path.exists(PRIVATE_KEY_PATH):
-    with open(PRIVATE_KEY_PATH, "r") as f:
-        PRIVATE_KEY = f.read()
-else:
-    PRIVATE_KEY = os.getenv("VONAGE_PRIVATE_KEY", "").replace('\\n', '\n').strip()
+# =========================
+# Load Private Key
+# =========================
+with open(PRIVATE_KEY_PATH, "r") as f:
+    PRIVATE_KEY = f.read()
 
 # =========================
-# Initialize Clients
+# Init App & Clients
 # =========================
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+voice_auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY)
+vonage_voice = Vonage(voice_auth)
 
-auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY)
-vonage_client = Vonage(auth)
+msg_auth = Auth(api_key=VONAGE_API_KEY, api_secret=VONAGE_API_SECRET)
+vonage_msg = Vonage(msg_auth)
 
 chat_sessions = {}
-call_log = []
 
 # =========================
 # Helpers
 # =========================
-def clean_num(number: str):
-    return re.sub(r'\D', '', str(number))
+def clean_number(number: str):
+    return re.sub(r"\D", "", str(number))
 
 def ask_gemini(text: str, session_id: str):
-    if session_id not in chat_sessions:
-        chat_sessions[session_id] = []
+    history = chat_sessions.get(session_id, [])[-6:]
+    full_prompt = "\n".join(history + [f"User: {text}"])
 
-    chat_history = chat_sessions[session_id]
-    full_prompt = "\n".join(chat_history + [f"You: {text}"])
-    data = {"contents":[{"parts":[{"text": full_prompt}]}]}
-    GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{"parts": [{"text": full_prompt}]}]
+    }
+
     try:
-        r = requests.post(GEMINI_URL, headers={"Content-Type":"application/json"}, data=json.dumps(data))
-        res = r.json()
-        reply = res["candidates"][0]["content"]["parts"][0]["text"]
+        r = requests.post(url, headers={"Content-Type": "application/json"}, data=json.dumps(payload))
+        reply = r.json()["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        reply = f"Error: {e}"
-    
-    chat_history.append(f"You: {text}")
-    chat_history.append(f"Gemini: {reply}")
-    chat_sessions[session_id] = chat_history
+        reply = f"AI Error: {e}"
+
+    history.append(f"User: {text}")
+    history.append(f"AI: {reply}")
+    chat_sessions[session_id] = history
     return reply
 
 def generate_ncco(text: str):
@@ -86,79 +88,114 @@ def generate_ncco(text: str):
                 "language": "en-US",
                 "endOnSilence": 1.2
             },
-            "eventUrl": [f"{RENDER_URL}/event"]
+            "eventUrl": [f"{BASE_URL}/event"]
         }
     ]
+
+def send_whatsapp_report(message: str, to_number: str):
+    try:
+        vonage_msg.messages.send_message({
+            "channel": "whatsapp",
+            "from": WHATSAPP_FROM,
+            "to": to_number,
+            "message_type": "text",
+            "text": message
+        })
+        print("📲 WhatsApp report sent")
+    except Exception as e:
+        print("WhatsApp Error:", e)
 
 # =========================
 # Routes
 # =========================
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
 
 @app.post("/call")
-async def call(request: Request, phone: str = Form(...)):
-    to_num = clean_num(phone)
-    from_num = clean_num(VOICE_FROM_NUMBER)
-    
+async def make_call(phone: str = Form(...)):
+    to_num = clean_number(phone)
+    from_num = clean_number(VOICE_FROM_NUMBER)
+
     try:
-        call_params = CreateCallRequest(
+        call = CreateCallRequest(
             to=[{"type": "phone", "number": to_num}],
             from_={"type": "phone", "number": from_num},
-            ncco=generate_ncco("Hello! This is your AI assistant.")
+            answer_url=[f"{BASE_URL}/answer"],
+            answer_method="GET"
         )
-        vonage_client.voice.create_call(call_params)
-        call_log.append({"to": to_num, "status": "Initiated"})
-        print(f"✅ Calling {to_num}")
+
+        response = vonage_voice.voice.create_call(call)
+        print("Call initiated:", response)
+
     except Exception as e:
-        call_log.append({"to": to_num, "status": f"Error: {e}"})
-        print(f"❌ Error calling {to_num}: {e}")
-    
-    return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
+        print("Call Error:", e)
 
-@app.post("/inbound")
-async def inbound(req: Request):
-    """التعامل مع رسائل Vonage الواردة"""
-    data = await req.json()
-    sender = data.get("from")
-    text = (data.get("text") or "").lower().strip()
+    return {"status": "calling"}
 
-    if text == "call" and sender:
-        to_num = clean_num(sender)
-        from_num = clean_num(VOICE_FROM_NUMBER)
-        try:
-            call_params = CreateCallRequest(
-                to=[{"type": "phone", "number": to_num}],
-                from_={"type": "phone", "number": from_num},
-                ncco=generate_ncco("Hello! This is your AI assistant.")
-            )
-            vonage_client.voice.create_call(call_params)
-            call_log.append({"to": to_num, "status": "Initiated"})
-            print(f"✅ Inbound: Calling {to_num}")
-        except Exception as e:
-            call_log.append({"to": to_num, "status": f"Error: {e}"})
-            print(f"❌ Inbound Error: {e}")
-
-    return {"status": "ok"}
+@app.get("/answer")
+async def answer():
+    return JSONResponse(generate_ncco("Hello! This is your AI assistant."))
 
 @app.post("/event")
-async def voice_event(req: Request):
-    data = await req.json()
+async def voice_event(request: Request):
+    try:
+        data = await request.json()
+    except:
+        form = await request.form()
+        data = dict(form)
+
     call_uuid = data.get("uuid")
     status = data.get("status")
+    duration = data.get("duration", 0)
+    to_number = data.get("to")
 
+    # ===== Call Completed =====
     if status in ["completed", "disconnected"]:
+        conversation = "\n".join(chat_sessions.get(call_uuid, []))
+
+        summary = ask_gemini(
+            f"Summarize this call professionally:\n{conversation}",
+            call_uuid
+        )
+
+        report = f"""
+📞 Call Report
+Status: {status}
+Duration: {duration} sec
+Call ID: {call_uuid}
+
+🧠 Summary:
+{summary}
+"""
+
+        send_whatsapp_report(report, to_number)
         chat_sessions.pop(call_uuid, None)
         return JSONResponse({"status": "ok"})
 
+    # ===== Call Failed =====
+    if status in ["failed", "rejected", "busy", "timeout"]:
+        reason = data.get("reason", "Unknown")
+
+        report = f"""
+❌ Call Failed
+Status: {status}
+Reason: {reason}
+Call ID: {call_uuid}
+"""
+
+        send_whatsapp_report(report, to_number)
+        return JSONResponse({"status": "ok"})
+
+    # ===== Speech Handling =====
     speech_results = data.get("speech", {}).get("results", [])
-    ai_reply = ask_gemini(speech_results[0].get("text") if speech_results else "Are you there?", call_uuid)
-    
+    if speech_results:
+        user_text = speech_results[0].get("text")
+    else:
+        user_text = "Are you there?"
+
+    ai_reply = ask_gemini(user_text, call_uuid)
     return JSONResponse(generate_ncco(ai_reply))
 
 # =========================
-# Main
+# Run
 # =========================
 if __name__ == "__main__":
     import uvicorn
