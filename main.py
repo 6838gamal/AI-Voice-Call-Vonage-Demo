@@ -8,16 +8,16 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from vonage import Vonage, Auth
-from vonage_voice import CreateCallRequest, Phone, Talk
+from vonage_voice import CreateCallRequest, Talk
 
 # =========================
-# Load environment
+# Load environment variables
 # =========================
 load_dotenv()
 
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
 PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH")
-VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
+VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")  # string فقط
 WHATSAPP_FROM = os.getenv("VONAGE_SANDBOX_NUMBER")
 VONAGE_API_KEY = os.getenv("VONAGE_API_KEY")
 VONAGE_API_SECRET = os.getenv("VONAGE_API_SECRET")
@@ -98,15 +98,14 @@ async def index(request: Request):
 @app.post("/call")
 async def make_call(request: Request, phone: str = Form(...)):
     to_num = clean_number(phone)
-    from_num = clean_number(VOICE_FROM_NUMBER)
     try:
         call_request = CreateCallRequest(
-            to=[Phone(number=to_num)],          # ✅ Phone object
-            from_=[Phone(number=from_num)],     # ✅ Phone object
+            to=[{"type": "phone", "number": to_num}],  # ✅ dict بالشكل الصحيح
+            from_=VOICE_FROM_NUMBER,                    # ✅ string فقط
             ncco=generate_ncco("Hello! This is your AI assistant.")
         )
         response = vonage_voice.voice.create_call(call_request)
-        call_uuid = getattr(response, "uuid", None) or to_num
+        call_uuid = getattr(response, "uuid", to_num)
         call_log[call_uuid] = {"to": to_num, "status": "initiated"}
         print("Call initiated:", call_uuid)
     except Exception as e:
