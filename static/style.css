@@ -1,0 +1,146 @@
+/* ==========================
+   Base Reset & Fonts
+========================== */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    background-color: #f7f8fc;
+    color: #333;
+    line-height: 1.6;
+    padding: 20px;
+}
+
+/* ==========================
+   Container
+========================== */
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    background: #fff;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+}
+
+/* ==========================
+   Headings
+========================== */
+h1 {
+    font-size: 28px;
+    color: #2c3e50;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+h2 {
+    font-size: 22px;
+    color: #34495e;
+    margin-bottom: 15px;
+}
+
+/* ==========================
+   Form
+========================== */
+form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 25px;
+}
+
+input[type="text"] {
+    flex: 1;
+    padding: 12px;
+    font-size: 16px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+}
+
+input[type="text"]:focus {
+    border-color: #3498db;
+    outline: none;
+}
+
+button {
+    padding: 12px 25px;
+    font-size: 16px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+button:hover {
+    background-color: #2980b9;
+}
+
+/* ==========================
+   Call Log Table
+========================== */
+.call-log table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.call-log th, .call-log td {
+    border: 1px solid #ddd;
+    padding: 12px;
+    text-align: left;
+}
+
+.call-log th {
+    background-color: #3498db;
+    color: #fff;
+}
+
+.call-log tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+.call-log tr:hover {
+    background-color: #e0f0ff;
+}
+
+/* ==========================
+   Status Colors
+========================== */
+.status-initiated {
+    color: #3498db;
+    font-weight: bold;
+}
+
+.status-completed {
+    color: #27ae60;
+    font-weight: bold;
+}
+
+.status-failed {
+    color: #e74c3c;
+    font-weight: bold;
+}
+
+.status-no-answer {
+    color: #f39c12;
+    font-weight: bold;
+}
+
+/* ==========================
+   Responsive
+========================== */
+@media (max-width: 600px) {
+    form {
+        flex-direction: column;
+    }
+
+    input[type="text"], button {
+        width: 100%;
+    }
+}

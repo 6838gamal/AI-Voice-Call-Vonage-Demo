@@ -100,12 +100,12 @@ async def make_call(request: Request, phone: str = Form(...)):
     try:
         call = CreateCallRequest(
             to=[{"type": "phone", "number": to_num}],
-            from_={"type": "phone", "number": from_num},
+            from_={"type": "phone", "number": from_num}],
             answer_url=[f"{BASE_URL}/answer"],
             answer_method="GET"
         )
         response = vonage_voice.voice.create_call(call)
-        # ✅ Fix UUID access
+        # Fix UUID access
         call_uuid = getattr(response, "uuid", None) or getattr(response, "call_uuid", None)
         if call_uuid:
             call_log[call_uuid] = {"to": to_num, "status": "initiated"}
@@ -134,7 +134,7 @@ async def voice_event(request: Request):
     duration = data.get("duration", 0)
     to_number = data.get("to") or WHATSAPP_FROM
 
-    # ===== Call Completed =====
+    # ===== Successful call =====
     if status in ["completed", "disconnected"]:
         conversation = "\n".join(chat_sessions.get(call_uuid, []))
         summary = ask_gemini(f"Summarize this call professionally:\n{conversation}", call_uuid)
@@ -144,22 +144,23 @@ Status: {status}
 Duration: {duration} sec
 Call ID: {call_uuid}
 
-🧠 Summary:
+🧠 Conversation Summary:
 {summary}
 """
         send_whatsapp_report(report, to_number)
         chat_sessions.pop(call_uuid, None)
         return JSONResponse({"status": "ok"})
 
-    # ===== Call Failed =====
-    if status in ["failed", "rejected", "busy", "timeout"]:
+    # ===== No answer / timeout =====
+    if status in ["no-answer", "timeout"]:
+        report = f"⚠️ Call Not Answered\nStatus: {status}\nCall ID: {call_uuid}"
+        send_whatsapp_report(report, to_number)
+        return JSONResponse({"status": "ok"})
+
+    # ===== Failed call =====
+    if status in ["failed", "busy", "rejected", "network-error"]:
         reason = data.get("reason", "Unknown")
-        report = f"""
-❌ Call Failed
-Status: {status}
-Reason: {reason}
-Call ID: {call_uuid}
-"""
+        report = f"❌ Call Failed\nStatus: {status}\nReason: {reason}\nCall ID: {call_uuid}"
         send_whatsapp_report(report, to_number)
         return JSONResponse({"status": "ok"})
 

@@ -1,38 +1,37 @@
 <!DOCTYPE html>
-<html lang="ar">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Voice & WhatsApp</title>
-<link rel="stylesheet" href="/static/css/style.css">
+<title>AI Voice Call Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-
 <div class="container">
-  <h1>تطبيق المكالمات والرسائل AI</h1>
+    <h1>AI Voice Call Dashboard</h1>
 
-  <section class="card">
-    <h2>إجراء مكالمة AI</h2>
-    <input type="text" id="phone" placeholder="أدخل رقم الهاتف +96777XXXXXXX">
-    <button id="callBtn">ابدأ المكالمة</button>
+    <form method="post" action="/call">
+        <input type="text" name="phone" placeholder="+9677xxxxxxx" required>
+        <button type="submit">اتصل</button>
+    </form>
 
-    <h3>سجل المكالمات</h3>
-    <ul id="log">
-      {% for c in calls %}
-      <li>{{c.to}} - {{c.status}}</li>
-      {% endfor %}
-    </ul>
-  </section>
-
-  <section class="card">
-    <h2>إرسال رسالة واتساب</h2>
-    <input type="text" id="phoneMsg" placeholder="رقم واتساب +96777XXXXXXX">
-    <textarea id="message" placeholder="اكتب رسالتك هنا"></textarea>
-    <button id="sendBtn">إرسال</button>
-    <div id="response"></div>
-  </section>
+    <div class="call-log">
+        <h2>سجل المكالمات</h2>
+        <table>
+            <tr>
+                <th>Call ID</th>
+                <th>رقم الهاتف</th>
+                <th>الحالة</th>
+            </tr>
+            {% for call_id, info in calls.items() %}
+            <tr>
+                <td>{{ call_id }}</td>
+                <td>{{ info.to }}</td>
+                <td class="status-{{ info.status | lower | replace(' ', '-') }}">{{ info.status }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
 </div>
-
-<script src="/static/js/script.js"></script>
 </body>
 </html>

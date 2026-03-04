@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Voice & WhatsApp</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<div class="container">
+  <h1>تطبيق المكالمات والرسائل AI</h1>
+
+  <section class="card">
+    <h2>إجراء مكالمة AI</h2>
+    <input type="text" id="phone" placeholder="أدخل رقم الهاتف +96777XXXXXXX">
+    <button id="callBtn">ابدأ المكالمة</button>
+
+    <h3>سجل المكالمات</h3>
+    <ul id="log">
+      {% for c in calls %}
+      <li>{{c.to}} - {{c.status}}</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>إرسال رسالة واتساب</h2>
+    <input type="text" id="phoneMsg" placeholder="رقم واتساب +96777XXXXXXX">
+    <textarea id="message" placeholder="اكتب رسالتك هنا"></textarea>
+    <button id="sendBtn">إرسال</button>
+    <div id="response"></div>
+  </section>
+</div>
+
+<script src="/static/js/script.js"></script>
+</body>
+</html>
