@@ -1,6 +1,5 @@
 import os
 import re
-import json
 import logging
 import requests
 import uvicorn
@@ -9,90 +8,69 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
-# استيراد مكتبات Vonage
-from vonage import Vonage, Auth
+# استيرادات Vonage
+from vonage import Vonage, Auth, HttpClientOptions
 from vonage_voice import CreateCallRequest
 from vonage_messages.models import WhatsappText
 
-# ==================================================
-# 1. إعدادات اللوج والبيئة
-# ==================================================
+# --- الإعدادات ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
 load_dotenv()
 
 APP_ID = os.getenv("VONAGE_APPLICATION_ID")
 PRIVATE_KEY_PATH = os.getenv("VONAGE_PRIVATE_KEY_PATH", "private.key")
 VOICE_FROM_NUMBER = os.getenv("VONAGE_FROM_NUMBER")
-WHATSAPP_FROM = os.getenv("VONAGE_SANDBOX_NUMBER")
-WHATSAPP_TO = os.getenv("REPORT_TO_NUMBER") 
+SANDBOX_NUMBER = os.getenv("VONAGE_SANDBOX_NUMBER", "14157386102")
+REPORT_TO_NUMBER = os.getenv("REPORT_TO_NUMBER")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# ==================================================
-# 2. تهيئة العملاء
-# ==================================================
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-try:
-    with open(PRIVATE_KEY_PATH, "r") as f:
-        PRIVATE_KEY = f.read()
-    auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY)
-    vonage_client = Vonage(auth)
-    logger.info("✅ تم تهيئة نظام Vonage")
-except Exception as e:
-    logger.error(f"❌ خطأ في الإعدادات: {e}")
+# --- تهيئة عملاء Vonage بشكل منفصل ---
+
+# 1. عميل الرسائل (يستخدم Sandbox API)
+msg_options = HttpClientOptions(api_host="messages-sandbox.nexmo.com")
+auth = Auth(application_id=APP_ID, private_key=PRIVATE_KEY_PATH)
+vonage_msg_client = Vonage(auth=auth, http_client_options=msg_options)
+
+# 2. عميل الصوت (يستخدم السيرفر الافتراضي الرسمي)
+vonage_voice_client = Vonage(auth=auth) 
 
 call_log = {}
 
-# ==================================================
-# 3. دالة تقارير Gemini 2.5 Flash
-# ==================================================
+# --- الوظائف الذكية ---
 
 def generate_ai_report(status_data: dict) -> str:
-    """استخدام موديل Gemini 2.5 Flash لصياغة التقرير"""
-    # تم تثبيت الموديل على الإصدار 2.5 فلاش كما طلبت
+    """صياغة تقرير احترافي باستخدام Gemini 2.5 Flash"""
+    # ملاحظة: تأكد من صحة إصدار الموديل في رابط الـ API الخاص بك
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     
-    prompt = f"""
-    بصفتك مساعداً ذكياً، حلل حالة المكالمة التالية واكتب تقريراً مختصراً وودوداً باللغة العربية لإرساله عبر الواتساب:
-    - الحالة النهائية: {status_data.get('status')}
-    - رقم المستلم: {status_data.get('to')}
-    - المدة المسجلة: {status_data.get('duration', 0)} ثانية
-    - تفاصيل إضافية: {status_data.get('reason', 'لا يوجد')}
-    استخدم الرموز التعبيرية المناسبة.
-    """
-    
+    prompt = f"حلل حالة مكالمة Vonage التالية واكتب تقرير واتساب عربي مختصر وذكي: {status_data}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
     try:
-        res = requests.post(url, json=payload, timeout=15)
+        res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
             return res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        else:
-            logger.error(f"❌ Gemini Error: {res.json()}")
     except Exception as e:
-        logger.error(f"❌ Connection Error with Gemini: {e}")
-    
-    return f"📢 تحديث: المكالمة للرقم {status_data.get('to')} حالتها الآن {status_data.get('status')}."
+        logger.error(f"Gemini Error: {e}")
+    return f"📢 تحديث مكالمة: {status_data.get('status')} للرقم {status_data.get('to')}"
 
-def send_whatsapp_report(message_text: str):
-    """إرسال التقرير عبر الواتساب"""
+def send_whatsapp(to_number: str, message_text: str):
+    """إرسال عبر Sandbox"""
+    clean_to = to_number.replace("+", "").strip()
+    clean_from = SANDBOX_NUMBER.replace("+", "").strip()
     try:
-        msg = WhatsappText(
-            from_=WHATSAPP_FROM.replace("+", "").strip(),
-            to=WHATSAPP_TO.replace("+", "").strip(),
-            text=message_text
-        )
-        vonage_client.messages.send(msg)
-        logger.info("✅ تم إرسال التقرير الذكي بنجاح")
+        msg = WhatsappText(from_=clean_from, to=clean_to, text=message_text)
+        # نستخدم عميل الرسائل المخصص للـ Sandbox
+        vonage_msg_client.messages.send(msg)
+        logger.info(f"✅ WhatsApp Sent to {clean_to}")
     except Exception as e:
-        logger.error(f"❌ فشل إرسال الواتساب: {e}")
+        logger.error(f"❌ Vonage Message Error: {e}")
 
-# ==================================================
-# 4. المسارات (Routes)
-# ==================================================
+# --- المسارات ---
 
 @app.post("/call")
 async def make_call(background_tasks: BackgroundTasks, phone: str = Form(...)):
@@ -101,43 +79,27 @@ async def make_call(background_tasks: BackgroundTasks, phone: str = Form(...)):
         call_request = CreateCallRequest(
             to=[{"type": "phone", "number": to_num}],
             from_={"type": "phone", "number": VOICE_FROM_NUMBER},
-            ncco=[{"action": "talk", "text": "This is an automated call from your smart system."}]
+            ncco=[{"action": "talk", "text": "Testing smart notification system"}]
         )
-        response = vonage_client.voice.create_call(call_request)
+        # نستخدم عميل الصوت الرسمي
+        response = vonage_voice_client.voice.create_call(call_request)
         call_log[response.uuid] = {"to": to_num, "status": "initiated"}
         
-        # إشعار مبدئي
-        background_tasks.add_task(send_whatsapp_report, f"📞 جاري الاتصال الآن بالرقم {to_num}...")
-        return JSONResponse({"status": "success", "uuid": response.uuid})
+        background_tasks.add_task(send_whatsapp, REPORT_TO_NUMBER, f"📞 جاري طلب الرقم {to_num}")
+        return {"status": "success", "uuid": response.uuid}
     except Exception as e:
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+        logger.error(f"❌ Voice Error: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.post("/event")
 async def voice_event(request: Request, background_tasks: BackgroundTasks):
-    """معالجة أحداث المكالمة وإرسال تقرير Gemini عند الانتهاء"""
     data = await request.json()
     status = data.get("status")
-    uuid = data.get("uuid")
-    
-    if uuid:
-        call_log[uuid] = {"to": data.get("to"), "status": status}
-        
-        # عند وصول المكالمة لحالة نهائية
-        if status in ["completed", "failed", "busy", "no-answer", "rejected"]:
-            ai_report = generate_ai_report(data)
-            background_tasks.add_task(send_whatsapp_report, ai_report)
-            
+    if status in ["completed", "failed", "busy", "no-answer"]:
+        report = generate_ai_report(data)
+        background_tasks.add_task(send_whatsapp, REPORT_TO_NUMBER, report)
     return Response(status_code=200)
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "calls": call_log})
-
-# ==================================================
-# 5. دالة الماين (Main)
-# ==================================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    logger.info(f"🚀 تشغيل النظام (Gemini 2.5 Flash) على المنفذ {port}")
-    # تأكد أن اسم هذا الملف هو main.py لتشغيله بهذا السطر
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
